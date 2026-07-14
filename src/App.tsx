@@ -6,6 +6,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
+  ClipboardPaste,
+  Loader2,
   Settings,
   ArrowLeft,
   Minus,
@@ -25,6 +27,7 @@ import {
   Shield,
   Cpu,
   LayoutDashboard,
+  Crosshair,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -33,11 +36,14 @@ import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
 import {
   providersApi,
   settingsApi,
+  universalProvidersApi,
   type AppId,
   type ProviderSwitchEvent,
 } from "@/lib/api";
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
+import { useCopyProviderToApp } from "@/hooks/useCopyProviderToApp";
+import { useFetchCurrentProviderModels } from "@/hooks/useFetchCurrentProviderModels";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
 import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
 import { hermesApi } from "@/lib/api/hermes";
@@ -50,6 +56,17 @@ import { useScanUnmanagedSkills } from "@/hooks/useSkills";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { deepClone } from "@/utils/deepClone";
+import { readText } from "@/lib/clipboard";
+import {
+  mergeNewApiCredentials,
+  parseNewApiClipboardPartial,
+  type PartialNewApiCredentials,
+  type ParsedNewApiCredentials,
+} from "@/utils/parseNewApiClipboard";
+import {
+  createUniversalProviderFromPreset,
+  findPresetByType,
+} from "@/config/universalProviderPresets";
 import { cn } from "@/lib/utils";
 import {
   isWindows,
@@ -59,7 +76,10 @@ import {
 } from "@/lib/platform";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
-import { ProviderList } from "@/components/providers/ProviderList";
+import {
+  ProviderList,
+  type ProviderListHandle,
+} from "@/components/providers/ProviderList";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -169,6 +189,7 @@ const getInitialView = (): View => {
 function App() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const providerListRef = useRef<ProviderListHandle>(null);
 
   const [activeApp, setActiveApp] = useState<AppId>(getInitialApp);
   const sharedFeatureApp: AppId =
@@ -178,6 +199,12 @@ function App() {
     useState<SkillsPageSource>("repos");
   const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [isQuickImporting, setIsQuickImporting] = useState(false);
+  /** When only URL or only key was captured, wait for the missing half. */
+  const [quickImportPending, setQuickImportPending] =
+    useState<PartialNewApiCredentials | null>(null);
+  const quickImportPendingRef = useRef<PartialNewApiCredentials | null>(null);
+  const quickImportLastClipRef = useRef<string>("");
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
 
   useEffect(() => {
@@ -277,6 +304,41 @@ function App() {
   });
   const providers = useMemo(() => data?.providers ?? {}, [data]);
   const currentProviderId = data?.currentProviderId ?? "";
+  const {
+    isFetching: isFetchingCurrentModels,
+    fetchCurrentProviderModels,
+    probeResult: modelsProbeResult,
+    probeById: modelsProbeById,
+  } = useFetchCurrentProviderModels(activeApp, providers, currentProviderId);
+
+  const handleScrollToCurrentProvider = () => {
+    // list 可能尚未挂载（loading / 切应用）时多拍重试
+    const tryScroll = () =>
+      providerListRef.current?.scrollToCurrentProvider() ?? false;
+
+    if (tryScroll()) return;
+
+    const delays = [50, 120, 250, 400, 700];
+    let finished = false;
+    for (const delay of delays) {
+      window.setTimeout(() => {
+        if (finished) return;
+        if (tryScroll()) {
+          finished = true;
+          return;
+        }
+        if (delay === delays[delays.length - 1]) {
+          toast.info(
+            t("provider.scrollToCurrentNotFound", {
+              defaultValue: "未找到当前正在使用的供应商",
+            }),
+          );
+        }
+      }, delay);
+    }
+  };
+
+
   const isOpenClawView =
     activeApp === "openclaw" &&
     (currentView === "providers" ||
@@ -702,6 +764,8 @@ function App() {
     return `${baseKey}-${counter}`;
   };
 
+  const copyProviderToApp = useCopyProviderToApp(activeApp);
+
   const handleDuplicateProvider = async (provider: Provider) => {
     const newSortIndex =
       provider.sortIndex !== undefined ? provider.sortIndex + 1 : undefined;
@@ -821,6 +885,230 @@ function App() {
       );
     }
   };
+
+  const clearQuickImportPending = () => {
+    quickImportPendingRef.current = null;
+    quickImportLastClipRef.current = "";
+    setQuickImportPending(null);
+  };
+
+  const createNewApiFromCredentials = async (
+    credentials: ParsedNewApiCredentials,
+  ) => {
+    const preset = findPresetByType("newapi");
+    if (!preset) {
+      toast.error(
+        t("provider.quickImportMissingPreset", {
+          defaultValue: "未找到 NewAPI 预设，无法导入",
+        }),
+      );
+      return false;
+    }
+
+    // 名称：几月几号 几点几分 + BASE URL；官网链接直接用 BASE URL
+    const now = new Date();
+    const quickImportName = `${now.getMonth() + 1}月${now.getDate()}日 ${String(
+      now.getHours(),
+    ).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")} ${
+      credentials.baseUrl
+    }`;
+
+    const provider = createUniversalProviderFromPreset(
+      preset,
+      crypto.randomUUID(),
+      credentials.baseUrl,
+      credentials.apiKey,
+      quickImportName,
+    );
+    provider.websiteUrl = credentials.baseUrl;
+    // NewAPI 默认走 Chat Completions（需开启路由）；同步到 Codex 时写入 meta.apiFormat
+    provider.meta = {
+      ...(provider.meta ?? {}),
+      apiFormat: "openai_chat",
+    };
+
+    try {
+      await universalProvidersApi.upsert(provider);
+    } catch (error) {
+      console.error("[App] Quick import upsert failed", error);
+      toast.error(
+        t("universalProvider.addFailed", {
+          defaultValue: "统一供应商添加失败",
+        }),
+      );
+      return false;
+    }
+
+    try {
+      await universalProvidersApi.sync(provider.id);
+      toast.success(
+        t("provider.quickImportCreated", {
+          defaultValue: "已快速导入 NewAPI 供应商「{{name}}」并同步",
+          name: provider.name,
+        }),
+      );
+    } catch (error) {
+      console.error("[App] Quick import sync failed", error);
+      toast.warning(
+        t("universalProvider.addedButSyncFailed", {
+          defaultValue: "统一供应商已添加，但同步失败",
+        }),
+      );
+    }
+
+    await queryClient.invalidateQueries({
+      queryKey: ["providers"],
+      refetchType: "all",
+    });
+    await queryClient.refetchQueries({
+      queryKey: ["providers"],
+      type: "all",
+    });
+    return true;
+  };
+
+  const applyQuickImportPartial = async (
+    partial: PartialNewApiCredentials,
+    clipboardText: string,
+  ) => {
+    const merged = mergeNewApiCredentials(
+      quickImportPendingRef.current ?? {},
+      partial,
+    );
+
+    if (merged.baseUrl && merged.apiKey) {
+      clearQuickImportPending();
+      await createNewApiFromCredentials({
+        baseUrl: merged.baseUrl,
+        apiKey: merged.apiKey,
+        name: merged.name,
+      });
+      return;
+    }
+
+    // Keep waiting for the missing half.
+    quickImportPendingRef.current = merged;
+    quickImportLastClipRef.current = clipboardText;
+    setQuickImportPending(merged);
+
+    if (merged.baseUrl && !merged.apiKey) {
+      toast.message(
+        t("provider.quickImportWaitingKey", {
+          defaultValue: "已识别 BASE URL，请复制 API Key（将自动导入）",
+        }),
+      );
+    } else if (merged.apiKey && !merged.baseUrl) {
+      toast.message(
+        t("provider.quickImportWaitingUrl", {
+          defaultValue: "已识别 API Key，请复制 BASE URL（将自动导入）",
+        }),
+      );
+    }
+  };
+
+  const handleQuickImportNewApi = async () => {
+    // Second click while waiting cancels the wait.
+    if (quickImportPendingRef.current) {
+      clearQuickImportPending();
+      toast.message(
+        t("provider.quickImportCancelled", {
+          defaultValue: "已取消快速导入等待",
+        }),
+      );
+      return;
+    }
+
+    if (isQuickImporting) return;
+    setIsQuickImporting(true);
+    try {
+      const clipboardText = await readText();
+      if (!clipboardText.trim()) {
+        toast.error(
+          t("provider.quickImportEmptyClipboard", {
+            defaultValue: "剪贴板为空，请先复制 URL 和 API Key",
+          }),
+        );
+        return;
+      }
+
+      const partial = parseNewApiClipboardPartial(clipboardText);
+      if (!partial) {
+        toast.error(
+          t("provider.quickImportPartialNoMatch", {
+            defaultValue: "未识别到可用的 URL 或 API Key，请复制后重试",
+          }),
+        );
+        return;
+      }
+
+      await applyQuickImportPartial(partial, clipboardText);
+    } catch (error) {
+      console.error("[App] Quick import failed", error);
+      toast.error(
+        t("provider.quickImportClipboardError", {
+          defaultValue: "读取剪贴板失败，请检查系统剪贴板权限",
+        }),
+      );
+    } finally {
+      setIsQuickImporting(false);
+    }
+  };
+
+  // While waiting for the missing half, poll clipboard and auto-create.
+  useEffect(() => {
+    if (!quickImportPending) return;
+
+    let cancelled = false;
+    let inFlight = false;
+
+    const tick = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      try {
+        const clipboardText = await readText();
+        if (cancelled) return;
+        if (!clipboardText.trim()) return;
+        if (clipboardText === quickImportLastClipRef.current) return;
+
+        const partial = parseNewApiClipboardPartial(clipboardText);
+        if (!partial) {
+          // Ignore unrelated clipboard content; keep waiting.
+          quickImportLastClipRef.current = clipboardText;
+          return;
+        }
+
+        // Only accept values that fill the missing slot (or a full pair).
+        const pending = quickImportPendingRef.current;
+        if (!pending) return;
+        const fillsMissing =
+          (Boolean(partial.baseUrl) && !pending.baseUrl) ||
+          (Boolean(partial.apiKey) && !pending.apiKey) ||
+          (Boolean(partial.baseUrl) && Boolean(partial.apiKey));
+        if (!fillsMissing) {
+          quickImportLastClipRef.current = clipboardText;
+          return;
+        }
+
+        await applyQuickImportPartial(partial, clipboardText);
+      } catch (error) {
+        // Silent during polling; user can click again or cancel.
+        console.warn("[App] Quick import poll failed", error);
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    void tick();
+    const timer = window.setInterval(() => {
+      void tick();
+    }, 800);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- poll only while pending; helpers close over latest refs
+  }, [quickImportPending]);
 
   const handleImportSuccess = async () => {
     try {
@@ -965,7 +1253,7 @@ function App() {
         default:
           return (
             <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
-              <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1">
+              <div className="provider-list-scroll flex-1 min-h-0 overflow-y-auto overflow-x-hidden pb-12 pl-1 pr-2 show-scrollbar">
                 <AnimatePresence mode="wait">
                   <motion.div
                     key={activeApp}
@@ -976,6 +1264,7 @@ function App() {
                     className="space-y-4"
                   >
                     <ProviderList
+                      ref={providerListRef}
                       providers={providers}
                       currentProviderId={currentProviderId}
                       appId={activeApp}
@@ -985,10 +1274,14 @@ function App() {
                         isProxyRunning && isCurrentAppTakeoverActive
                       }
                       activeProviderId={activeProviderId}
+                      modelsProbeStatus={modelsProbeResult.status}
+                      modelsProbeProviderId={modelsProbeResult.providerId}
+                      modelsProbeById={modelsProbeById}
                       onSwitch={switchProvider}
                       onEdit={(provider) => {
                         setEditingProvider(provider);
                       }}
+                      onUpdate={(provider) => updateProvider(provider)}
                       onDelete={(provider) =>
                         setConfirmAction({ provider, action: "delete" })
                       }
@@ -1009,6 +1302,8 @@ function App() {
                           : undefined
                       }
                       onDuplicate={handleDuplicateProvider}
+                      onCopyToApp={copyProviderToApp}
+                      visibleApps={visibleApps}
                       onConfigureUsage={setUsageProvider}
                       onOpenWebsite={handleOpenWebsite}
                       onOpenTerminal={
@@ -1035,7 +1330,7 @@ function App() {
       <AnimatePresence mode="wait">
         <motion.div
           key={currentView}
-          className="flex-1 min-h-0"
+          className="flex flex-1 min-h-0 flex-col overflow-hidden"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -1390,6 +1685,109 @@ function App() {
                 )}
                 {currentView === "providers" && (
                   <>
+                                        <Button
+                      onClick={() => void fetchCurrentProviderModels()}
+                      size={
+                        modelsProbeResult.status !== "idle" ||
+                        isFetchingCurrentModels
+                          ? "sm"
+                          : "icon"
+                      }
+                      variant="outline"
+                      disabled={isFetchingCurrentModels}
+                      className={cn(
+                        "mr-1 transition-colors duration-300",
+                        modelsProbeResult.status !== "idle" ||
+                          isFetchingCurrentModels
+                          ? "h-9 gap-1.5 px-2.5 text-xs font-medium"
+                          : "",
+                        isFetchingCurrentModels ||
+                          modelsProbeResult.status === "probing"
+                          ? "border-amber-500/70 bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 dark:text-amber-300"
+                          : modelsProbeResult.status === "success"
+                            ? "border-emerald-500 bg-emerald-500/15 text-emerald-700 shadow-sm shadow-emerald-500/20 hover:bg-emerald-500/20 dark:text-emerald-300"
+                            : modelsProbeResult.status === "empty"
+                              ? "border-orange-500 bg-orange-500/15 text-orange-700 shadow-sm shadow-orange-500/20 hover:bg-orange-500/20 dark:text-orange-300"
+                              : modelsProbeResult.status === "failed"
+                                ? "border-red-500 bg-red-500/15 text-red-700 shadow-sm shadow-red-500/20 hover:bg-red-500/20 dark:text-red-300"
+                                : modelsProbeResult.status === "skipped"
+                                  ? "border-muted-foreground/40 bg-muted text-muted-foreground"
+                                  : "",
+                      )}
+                      title={
+                        isFetchingCurrentModels ||
+                        modelsProbeResult.status === "probing"
+                          ? t("provider.fetchModelsProbeRunning", {
+                              success: modelsProbeResult.successCount ?? 0,
+                              failed: modelsProbeResult.failedCount ?? 0,
+                              total: modelsProbeResult.totalCount ?? 0,
+                              defaultValue: `正在批量拉取模型… 可用 ${modelsProbeResult.successCount ?? 0} / 失败 ${modelsProbeResult.failedCount ?? 0}`,
+                            })
+                          : modelsProbeResult.status === "success"
+                            ? t("provider.fetchModelsProbeButtonSuccess", {
+                                count: modelsProbeResult.modelCount ?? 0,
+                                success: modelsProbeResult.successCount ?? 0,
+                                failed: modelsProbeResult.failedCount ?? 0,
+                                empty: modelsProbeResult.emptyCount ?? 0,
+                                defaultValue: `探测完成：可用 ${modelsProbeResult.successCount ?? 0} · 无模型 ${modelsProbeResult.emptyCount ?? 0} · 失败 ${modelsProbeResult.failedCount ?? 0}（约 60 秒后复位）`,
+                              })
+                            : modelsProbeResult.status === "empty"
+                              ? t("provider.fetchModelsProbeButtonEmpty", {
+                                  empty: modelsProbeResult.emptyCount ?? 0,
+                                  defaultValue:
+                                    "均未返回模型（橙色；约 60 秒后复位）",
+                                })
+                              : modelsProbeResult.status === "failed"
+                                ? t("provider.fetchModelsProbeButtonFailed", {
+                                    failed: modelsProbeResult.failedCount ?? 0,
+                                    defaultValue:
+                                      "探测失败较多，请看卡片红/橙边框（约 60 秒后复位）",
+                                  })
+                                : t("provider.fetchModelsProbe", {
+                                    defaultValue:
+                                      "一键拉取模型（批量检测全部供应商是否有效）",
+                                  })
+                      }
+                      aria-label={t("provider.fetchModelsProbe", {
+                        defaultValue: "一键拉取模型（批量检测全部供应商是否有效）",
+                      })}
+                    >
+                      {isFetchingCurrentModels ||
+                      modelsProbeResult.status === "probing" ? (
+                        <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                      ) : (
+                        <Search className="h-4 w-4 shrink-0" />
+                      )}
+                      {(isFetchingCurrentModels ||
+                        modelsProbeResult.status !== "idle") && (
+                        <span className="max-w-[9rem] truncate">
+                          {isFetchingCurrentModels ||
+                          modelsProbeResult.status === "probing"
+                            ? t("provider.fetchModelsProbeRunningShort", {
+                                ok: modelsProbeResult.successCount ?? 0,
+                                bad: modelsProbeResult.failedCount ?? 0,
+                                defaultValue: `${modelsProbeResult.successCount ?? 0}✓ ${modelsProbeResult.failedCount ?? 0}✗`,
+                              })
+                            : t("provider.fetchModelsProbeDoneShort", {
+                                ok: modelsProbeResult.successCount ?? 0,
+                                empty: modelsProbeResult.emptyCount ?? 0,
+                                bad: modelsProbeResult.failedCount ?? 0,
+                                defaultValue: `${modelsProbeResult.successCount ?? 0}✓ ${modelsProbeResult.emptyCount ?? 0}○ ${modelsProbeResult.failedCount ?? 0}✗`,
+                              })}
+                        </span>
+                      )}
+                    </Button>
+                    <Button
+                      onClick={handleScrollToCurrentProvider}
+                      size="icon"
+                      variant="outline"
+                      className="mr-1.5"
+                      title={t("provider.scrollToCurrent", {
+                        defaultValue: "快速定位到正在使用的供应商",
+                      })}
+                    >
+                      <Crosshair className="h-4 w-4" />
+                    </Button>
                     <AppSwitcher
                       activeApp={activeApp}
                       onSwitch={setActiveApp}
@@ -1560,9 +1958,74 @@ function App() {
                       onClick={() => setIsAddOpen(true)}
                       size="icon"
                       className={`ml-2 ${addActionButtonClass}`}
+                      title={t("header.addProvider")}
                     >
                       <Plus className="w-5 h-5" />
                     </Button>
+                    <div className="ml-1 flex items-center gap-1.5">
+                      <Button
+                        onClick={() => void handleQuickImportNewApi()}
+                        size="icon"
+                        variant="outline"
+                        disabled={isQuickImporting && !quickImportPending}
+                        className={cn(
+                          "relative",
+                          quickImportPending &&
+                            "border-amber-500/70 text-amber-600 dark:text-amber-400",
+                        )}
+                        title={
+                          quickImportPending
+                            ? t("provider.quickImportWaitingHint", {
+                                defaultValue:
+                                  "等待剪贴板补齐中…再次点击可取消",
+                              })
+                            : t("provider.quickImport", {
+                                defaultValue: "快速导入",
+                              })
+                        }
+                      >
+                        {isQuickImporting && !quickImportPending ? (
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                        ) : quickImportPending ? (
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                        ) : (
+                          <ClipboardPaste className="w-5 h-5" />
+                        )}
+                      </Button>
+                      <AnimatePresence>
+                        {quickImportPending && (
+                          <motion.span
+                            initial={{ opacity: 0, x: -6 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: -6 }}
+                            className="max-w-[220px] truncate text-xs text-amber-600 dark:text-amber-400"
+                            title={
+                              quickImportPending.baseUrl &&
+                              !quickImportPending.apiKey
+                                ? t("provider.quickImportWaitingKey", {
+                                    defaultValue:
+                                      "已识别 BASE URL，请复制 API Key（将自动导入）",
+                                  })
+                                : t("provider.quickImportWaitingUrl", {
+                                    defaultValue:
+                                      "已识别 API Key，请复制 BASE URL（将自动导入）",
+                                  })
+                            }
+                          >
+                            {quickImportPending.baseUrl &&
+                            !quickImportPending.apiKey
+                              ? t("provider.quickImportWaitingKey", {
+                                  defaultValue:
+                                    "已识别 BASE URL，请复制 API Key（将自动导入）",
+                                })
+                              : t("provider.quickImportWaitingUrl", {
+                                  defaultValue:
+                                    "已识别 API Key，请复制 BASE URL（将自动导入）",
+                                })}
+                          </motion.span>
+                        )}
+                      </AnimatePresence>
+                    </div>
                   </>
                 )}
               </div>
@@ -1571,7 +2034,13 @@ function App() {
         </div>
       </header>
 
-      <main className="flex-1 min-h-0 flex flex-col overflow-y-auto animate-fade-in">
+      <main
+        className={
+          currentView === "providers"
+            ? "flex-1 min-h-0 flex flex-col overflow-hidden animate-fade-in"
+            : "flex-1 min-h-0 flex flex-col overflow-y-auto show-scrollbar animate-fade-in"
+        }
+      >
         {isOpenClawView && openclawHealthWarnings.length > 0 && (
           <OpenClawHealthBanner warnings={openclawHealthWarnings} />
         )}
@@ -1664,3 +2133,4 @@ function App() {
 }
 
 export default App;
+

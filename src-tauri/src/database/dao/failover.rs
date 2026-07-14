@@ -19,7 +19,7 @@ pub struct FailoverQueueItem {
 }
 
 impl Database {
-    /// 获取故障转移队列（按 sort_index 排序）
+    /// 获取故障转移队列（sort_index 优先，created_at 次之）
     pub fn get_failover_queue(&self, app_type: &str) -> Result<Vec<FailoverQueueItem>, AppError> {
         let conn = lock_conn!(self.conn);
 
@@ -28,7 +28,7 @@ impl Database {
                 "SELECT id, name, sort_index, notes
                  FROM providers
                  WHERE app_type = ?1 AND in_failover_queue = 1
-                 ORDER BY COALESCE(sort_index, 999999), id ASC",
+                 ORDER BY COALESCE(sort_index, 999999), COALESCE(created_at, 9223372036854775807) ASC, id ASC",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
 
@@ -147,3 +147,4 @@ impl Database {
         Ok(available)
     }
 }
+

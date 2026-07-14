@@ -569,6 +569,7 @@ function ProviderFormFull({
     resetCodexConfig,
   } = useCodexConfigState({ initialData });
 
+  // 新建默认 Chat Completions（需开启路由）；编辑时保留已有配置
   const initialCodexApiFormat: CodexApiFormat =
     initialData?.meta?.apiFormat === "openai_chat"
       ? "openai_chat"
@@ -582,7 +583,7 @@ function ProviderFormFull({
                   ? initialData.settingsConfig.config
                   : "",
               ),
-            ) ?? "openai_responses");
+            ) ?? (initialData ? "openai_responses" : "openai_chat"));
 
   const [localCodexApiFormat, setLocalCodexApiFormat] =
     useState<CodexApiFormat>(initialCodexApiFormat);
@@ -639,6 +640,8 @@ function ProviderFormFull({
       resetCodexConfig(template.auth, template.config);
       setCodexChatReasoning({});
       setPromptCacheRouting("auto");
+      // 新建自定义供应商默认 Chat Completions（需开启路由）
+      setLocalCodexApiFormat("openai_chat");
     }
   }, [appId, initialData, selectedPresetId, resetCodexConfig]);
 
@@ -1666,10 +1669,8 @@ function ProviderFormFull({
         resetCodexConfig(template.auth, template.config);
         setCodexChatReasoning({});
         setPromptCacheRouting("auto");
-        setLocalCodexApiFormat(
-          codexApiFormatFromWireApi(extractCodexWireApi(template.config)) ??
-            "openai_responses",
-        );
+        // 自定义模板默认 Chat Completions（需开启路由）；wire_api 仍固定 responses
+        setLocalCodexApiFormat("openai_chat");
       }
       if (appId === "gemini") {
         resetGeminiConfig({}, {});

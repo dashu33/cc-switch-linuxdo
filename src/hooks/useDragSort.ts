@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import type { Provider } from "@/types";
 import { providersApi, type AppId } from "@/lib/api";
+import { sortProvidersList } from "@/utils/providerSort";
 
 export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
   const queryClient = useQueryClient();
@@ -23,22 +24,11 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
         ? "zh-CN"
         : i18n.language === "zh-TW"
           ? "zh-TW"
-          : "en-US";
-    return Object.values(providers).sort((a, b) => {
-      if (a.sortIndex !== undefined && b.sortIndex !== undefined) {
-        return a.sortIndex - b.sortIndex;
-      }
-      if (a.sortIndex !== undefined) return -1;
-      if (b.sortIndex !== undefined) return 1;
-
-      const timeA = a.createdAt ?? 0;
-      const timeB = b.createdAt ?? 0;
-      if (timeA && timeB && timeA !== timeB) {
-        return timeA - timeB;
-      }
-
-      return a.name.localeCompare(b.name, locale);
-    });
+          : i18n.language === "ja"
+            ? "ja-JP"
+            : "en-US";
+    // sortIndex first, then import/create time (createdAt).
+    return sortProvidersList(Object.values(providers), locale);
   }, [providers, i18n.language]);
 
   const sensors = useSensors(
@@ -117,3 +107,4 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
     handleDragEnd,
   };
 }
+

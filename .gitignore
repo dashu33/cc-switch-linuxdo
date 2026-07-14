@@ -29,3 +29,11 @@ copilot-api
 .history
 CODEBUDDY.md
 mainWindow.js
+
+# local signing keys (never commit)
+.local-signing/
+*.pid
+rustup-*.status
+rustup-*.pid
+watch-build.pid
+

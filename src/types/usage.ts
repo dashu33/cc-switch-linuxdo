@@ -103,6 +103,10 @@ export interface ProviderStats {
   totalCost: string;
   successRate: number;
   avgLatencyMs: number;
+  /** 平均首字响应（ms）；仅明细日志有 first_token_ms 时有值 */
+  avgFirstTokenMs?: number | null;
+  /** 最近一次请求时间（unix 秒）；无数据时为 undefined/null */
+  lastUsedAt?: number | null;
 }
 
 export interface ModelStats {
@@ -146,7 +150,7 @@ export interface ProviderLimitStatus {
   monthlyExceeded: boolean;
 }
 
-export type UsageRangePreset = "today" | "1d" | "7d" | "14d" | "30d" | "custom";
+export type UsageRangePreset = "5m" | "today" | "1d" | "7d" | "14d" | "30d" | "custom";
 
 export interface UsageRangeSelection {
   preset: UsageRangePreset;

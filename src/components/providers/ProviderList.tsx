@@ -6,7 +6,9 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import {
+  forwardRef,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
@@ -17,7 +19,7 @@ import { AlertTriangle, Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import type { Provider } from "@/types";
+import type { Provider, VisibleApps } from "@/types";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import { useDragSort } from "@/hooks/useDragSort";
@@ -46,6 +48,18 @@ import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { isTextEditableTarget } from "@/utils/domUtils";
+import { useProviderStats } from "@/lib/query/usage";
+import type { ProviderStats } from "@/types/usage";
+import type { UsageRangeSelection } from "@/types/usage";
+import type {
+  ModelsProbeById,
+  ModelsProbeStatus,
+} from "@/hooks/useFetchCurrentProviderModels";
+
+export type ProviderListHandle = {
+  /** 滚动并高亮当前正在使用的供应商；找不到返回 false */
+  scrollToCurrentProvider: () => boolean;
+};
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -53,11 +67,14 @@ interface ProviderListProps {
   appId: AppId;
   onSwitch: (provider: Provider) => void;
   onEdit: (provider: Provider) => void;
+  onUpdate?: (provider: Provider) => void | Promise<void>;
   onDelete: (provider: Provider) => void;
   onRemoveFromConfig?: (provider: Provider) => void;
   onDisableOmo?: () => void;
   onDisableOmoSlim?: () => void;
   onDuplicate: (provider: Provider) => void;
+  onCopyToApp?: (provider: Provider, targetApp: AppId) => void;
+  visibleApps?: VisibleApps;
   onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onOpenTerminal?: (provider: Provider) => void;
@@ -67,19 +84,27 @@ interface ProviderListProps {
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管）
   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
   onSetAsDefault?: (provider: Provider) => void; // OpenClaw: set as default model
+  /** 一键拉模型探测结果（按 providerId 匹配当前卡） */
+  modelsProbeStatus?: ModelsProbeStatus;
+  modelsProbeProviderId?: string | null;
+  /** 批量探测：每张卡独立状态 */
+  modelsProbeById?: ModelsProbeById;
 }
 
-export function ProviderList({
+export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(function ProviderList({
   providers,
   currentProviderId,
   appId,
   onSwitch,
   onEdit,
+  onUpdate,
   onDelete,
   onRemoveFromConfig,
   onDisableOmo,
   onDisableOmoSlim,
   onDuplicate,
+  onCopyToApp,
+  visibleApps,
   onConfigureUsage,
   onOpenWebsite,
   onOpenTerminal,
@@ -89,8 +114,13 @@ export function ProviderList({
   isProxyTakeover = false,
   activeProviderId,
   onSetAsDefault,
-}: ProviderListProps) {
+  modelsProbeStatus = "idle",
+  modelsProbeProviderId = null,
+  modelsProbeById = {},
+}, ref) {
   const { t } = useTranslation();
+  const listRootRef = useRef<HTMLDivElement | null>(null);
+  const searchTermRef = useRef("");
   const { checkProvider, isChecking } = useStreamCheck(appId);
   const { sortedProviders, sensors, handleDragEnd } = useDragSort(
     providers,
@@ -114,6 +144,82 @@ export function ProviderList({
   // Hermes: 读取当前 model.provider，用于判断哪个供应商是"当前激活"（高亮）
   const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
   const hermesCurrentProviderId = hermesModelConfig?.provider;
+
+  // 本地 proxy/session 用量：列表级批量拉取一次，按 providerId 分发到卡片
+  // 口径与「用量统计」页的 Provider 统计一致（默认近 7 天）
+  const providerUsageRange = useMemo<UsageRangeSelection>(
+    () => ({ preset: "7d" }),
+    [],
+  );
+  // 近 5 分钟：即时可用性（成功率）
+  const providerRecentUsageRange = useMemo<UsageRangeSelection>(
+    () => ({ preset: "5m" }),
+    [],
+  );
+  const { data: providerStatsList } = useProviderStats(
+    providerUsageRange,
+    { appType: appId },
+    {
+      // 列表统计缓存：从设置返回时先展示旧值，避免整页卡顿
+      staleTime: 60_000,
+      gcTime: 10 * 60_000,
+      refetchOnWindowFocus: false,
+    },
+  );
+  const { data: providerRecentStatsList } = useProviderStats(
+    providerRecentUsageRange,
+    { appType: appId },
+    {
+      // 近 5 分钟更需要新鲜度，但仍保留短缓存避免视图切换时全量重拉
+      staleTime: 15_000,
+      gcTime: 10 * 60_000,
+      refetchInterval: 30_000,
+      refetchOnWindowFocus: false,
+    },
+  );
+
+  const buildStatsMaps = useCallback((list?: ProviderStats[]) => {
+    const byId = new Map<string, ProviderStats>();
+    const byName = new Map<string, ProviderStats>();
+    for (const stat of list ?? []) {
+      if (stat.providerId) {
+        byId.set(stat.providerId, stat);
+      }
+      if (stat.providerName) {
+        byName.set(stat.providerName, stat);
+      }
+    }
+    return { byId, byName };
+  }, []);
+
+  const providerStatsById = useMemo(
+    () => buildStatsMaps(providerStatsList),
+    [buildStatsMaps, providerStatsList],
+  );
+  const providerRecentStatsById = useMemo(
+    () => buildStatsMaps(providerRecentStatsList),
+    [buildStatsMaps, providerRecentStatsList],
+  );
+
+  const resolveProviderStats = useCallback(
+    (provider: Provider): ProviderStats | undefined => {
+      return (
+        providerStatsById.byId.get(provider.id) ??
+        providerStatsById.byName.get(provider.name)
+      );
+    },
+    [providerStatsById],
+  );
+
+  const resolveProviderRecentStats = useCallback(
+    (provider: Provider): ProviderStats | undefined => {
+      return (
+        providerRecentStatsById.byId.get(provider.id) ??
+        providerRecentStatsById.byName.get(provider.name)
+      );
+    },
+    [providerRecentStatsById],
+  );
 
   // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw/Hermes）
   const isProviderInConfig = useCallback(
@@ -191,6 +297,8 @@ export function ProviderList({
   const [searchTerm, setSearchTerm] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const [scrollHighlightId, setScrollHighlightId] = useState<string | null>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { data: claudeDesktopStatus } = useQuery({
     queryKey: ["claudeDesktopStatus"],
     queryFn: () => providersApi.getClaudeDesktopStatus(),
@@ -268,6 +376,11 @@ export function ProviderList({
   }, []);
 
   useEffect(() => {
+    searchTermRef.current = searchTerm;
+  }, [searchTerm]);
+
+
+  useEffect(() => {
     if (isSearchOpen) {
       const frame = requestAnimationFrame(() => {
         searchInputRef.current?.focus();
@@ -287,6 +400,195 @@ export function ProviderList({
       );
     });
   }, [searchTerm, sortedProviders]);
+
+  /** 与卡片 isCurrent 一致的「正在使用」供应商 ID */
+  const resolveInUseProviderId = useCallback((): string | null => {
+    // 代理接管/故障转移：优先实际在跑的供应商
+    if (
+      (isProxyTakeover || isFailoverModeActive) &&
+      activeProviderId &&
+      providers[activeProviderId]
+    ) {
+      return activeProviderId;
+    }
+    if (
+      appId === "hermes" &&
+      hermesCurrentProviderId &&
+      providers[hermesCurrentProviderId]
+    ) {
+      return hermesCurrentProviderId;
+    }
+    if (currentProviderId && providers[currentProviderId]) {
+      return currentProviderId;
+    }
+    if (currentOmoId && providers[currentOmoId]) {
+      return currentOmoId;
+    }
+    if (currentOmoSlimId && providers[currentOmoSlimId]) {
+      return currentOmoSlimId;
+    }
+    return null;
+  }, [
+    activeProviderId,
+    appId,
+    currentOmoId,
+    currentOmoSlimId,
+    currentProviderId,
+    hermesCurrentProviderId,
+    isFailoverModeActive,
+    isProxyTakeover,
+    providers,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current) {
+        clearTimeout(highlightTimerRef.current);
+      }
+    };
+  }, []);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      scrollToCurrentProvider: () => {
+        const targetId = resolveInUseProviderId();
+        if (!targetId) return false;
+
+        const isTargetVisible = () =>
+          Object.prototype.hasOwnProperty.call(providers, targetId) &&
+          (searchTermRef.current.trim() === "" ||
+            filteredProviders.some((p) => p.id === targetId));
+
+        // 搜索把当前供应商藏起来时，先清空搜索再定位
+        const needClearSearch =
+          !isTargetVisible() && Boolean(searchTermRef.current.trim());
+        if (needClearSearch) {
+          setSearchTerm("");
+          setIsSearchOpen(false);
+        }
+
+        const findScrollableParents = (el: HTMLElement): HTMLElement[] => {
+          const parents: HTMLElement[] = [];
+          let parent: HTMLElement | null = el.parentElement;
+          while (parent) {
+            const style = window.getComputedStyle(parent);
+            const overflowY = style.overflowY;
+            const overflow = style.overflow;
+            const allowsY =
+              overflowY === "auto" ||
+              overflowY === "scroll" ||
+              overflowY === "overlay" ||
+              overflow === "auto" ||
+              overflow === "scroll" ||
+              overflow === "overlay";
+            // flex 布局下 scrollHeight 可能接近 clientHeight，放宽阈值
+            if (allowsY && parent.scrollHeight > parent.clientHeight - 1) {
+              parents.push(parent);
+            }
+            parent = parent.parentElement;
+          }
+          return parents;
+        };
+
+        const scrollProviderIntoView = (el: HTMLElement) => {
+          const scrollParents = findScrollableParents(el);
+          if (scrollParents.length === 0) {
+            el.scrollIntoView({ behavior: "smooth", block: "center" });
+            return;
+          }
+
+          // 从最外层到最内层：每层用当前几何位置重算，避免嵌套滚动位移叠加错误
+          // 外层先 instant，最内层 smooth，体感更准
+          const ordered = [...scrollParents].reverse();
+          ordered.forEach((parent, index) => {
+            const parentRect = parent.getBoundingClientRect();
+            const elRect = el.getBoundingClientRect();
+            const delta =
+              elRect.top -
+              parentRect.top -
+              parent.clientHeight / 2 +
+              elRect.height / 2;
+            const nextTop = Math.max(
+              0,
+              Math.min(
+                parent.scrollHeight - parent.clientHeight,
+                parent.scrollTop + delta,
+              ),
+            );
+            const isLast = index === ordered.length - 1;
+            parent.scrollTo({
+              top: nextTop,
+              behavior: isLast ? "smooth" : "auto",
+            });
+          });
+        };
+
+        const queryTargetEl = (): HTMLElement | null => {
+          const safeId =
+            typeof CSS !== "undefined" && typeof CSS.escape === "function"
+              ? CSS.escape(targetId)
+              : targetId.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+          const selector = `[data-provider-id="${safeId}"]`;
+          const scope: ParentNode = listRootRef.current ?? document;
+          const matches = Array.from(
+            scope.querySelectorAll(selector),
+          ) as HTMLElement[];
+          const pool =
+            matches.length > 0
+              ? matches
+              : (Array.from(
+                  document.querySelectorAll(selector),
+                ) as HTMLElement[]);
+          if (pool.length === 0) return null;
+          return (
+            pool.find(
+              (node) => node.getAttribute("data-provider-current") === "true",
+            ) ??
+            pool[pool.length - 1] ??
+            null
+          );
+        };
+
+        const runScroll = (): boolean => {
+          const el = queryTargetEl();
+          if (!el) return false;
+          scrollProviderIntoView(el);
+          // smooth 过程中再校正一次，处理双层 overflow 布局滞后
+          window.setTimeout(() => {
+            const latest = queryTargetEl();
+            if (latest) scrollProviderIntoView(latest);
+          }, 120);
+          setScrollHighlightId(targetId);
+          if (highlightTimerRef.current) {
+            clearTimeout(highlightTimerRef.current);
+          }
+          highlightTimerRef.current = setTimeout(() => {
+            setScrollHighlightId((cur) => (cur === targetId ? null : cur));
+          }, 1800);
+          return true;
+        };
+
+        if (runScroll()) return true;
+
+        // 清空搜索 / 列表重渲染后多拍重试
+        const retryDelays = [0, 50, 120, 250, 400];
+        let succeeded = false;
+        for (const delay of retryDelays) {
+          window.setTimeout(() => {
+            if (succeeded) return;
+            if (runScroll()) {
+              succeeded = true;
+            }
+          }, delay);
+        }
+        // 仅在刚清空搜索、等待 DOM 重挂时对调用方返回 true；
+        // loading / 未找到 DOM 时返回 false，让 App 侧继续重试。
+        return needClearSearch;
+      },
+    }),
+    [filteredProviders, providers, resolveInUseProviderId],
+  );
 
   const claudeDesktopStatusMessages = useMemo(() => {
     if (appId !== "claude-desktop" || !claudeDesktopStatus) return [];
@@ -406,11 +708,14 @@ export function ProviderList({
                 isOmoSlim={isOmoSlim}
                 onSwitch={onSwitch}
                 onEdit={onEdit}
+                onUpdate={onUpdate}
                 onDelete={onDelete}
                 onRemoveFromConfig={onRemoveFromConfig}
                 onDisableOmo={onDisableOmo}
                 onDisableOmoSlim={onDisableOmoSlim}
                 onDuplicate={onDuplicate}
+                onCopyToApp={onCopyToApp}
+                visibleApps={visibleApps}
                 onConfigureUsage={onConfigureUsage}
                 onOpenWebsite={onOpenWebsite}
                 onOpenTerminal={onOpenTerminal}
@@ -434,6 +739,15 @@ export function ProviderList({
                 onSetAsDefault={
                   onSetAsDefault ? () => onSetAsDefault(provider) : undefined
                 }
+                proxyUsageStats={resolveProviderStats(provider)}
+                proxyRecentUsageStats={resolveProviderRecentStats(provider)}
+                modelsProbeStatus={
+                  modelsProbeById[provider.id]?.status ??
+                  (modelsProbeProviderId === provider.id
+                    ? modelsProbeStatus
+                    : "idle")
+                }
+                scrollHighlight={scrollHighlightId === provider.id}
               />
             );
           })}
@@ -443,7 +757,7 @@ export function ProviderList({
   );
 
   return (
-    <div className="mt-4 space-y-4">
+    <div ref={listRootRef} className="mt-4 space-y-4">
       {claudeDesktopStatusMessages.length > 0 && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
           <div className="flex items-center gap-2 font-medium">
@@ -534,10 +848,14 @@ export function ProviderList({
       )}
     </div>
   );
-}
+});
 
 interface SortableProviderCardProps {
   provider: Provider;
+  proxyUsageStats?: ProviderStats;
+  proxyRecentUsageStats?: ProviderStats;
+  modelsProbeStatus?: ModelsProbeStatus;
+  scrollHighlight?: boolean;
   isCurrent: boolean;
   appId: AppId;
   isInConfig: boolean;
@@ -545,11 +863,14 @@ interface SortableProviderCardProps {
   isOmoSlim: boolean;
   onSwitch: (provider: Provider) => void;
   onEdit: (provider: Provider) => void;
+  onUpdate?: (provider: Provider) => void | Promise<void>;
   onDelete: (provider: Provider) => void;
   onRemoveFromConfig?: (provider: Provider) => void;
   onDisableOmo?: () => void;
   onDisableOmoSlim?: () => void;
   onDuplicate: (provider: Provider) => void;
+  onCopyToApp?: (provider: Provider, targetApp: AppId) => void;
+  visibleApps?: VisibleApps;
   onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onOpenTerminal?: (provider: Provider) => void;
@@ -576,11 +897,14 @@ function SortableProviderCard({
   isOmoSlim,
   onSwitch,
   onEdit,
+  onUpdate,
   onDelete,
   onRemoveFromConfig,
   onDisableOmo,
   onDisableOmoSlim,
   onDuplicate,
+  onCopyToApp,
+  visibleApps,
   onConfigureUsage,
   onOpenWebsite,
   onOpenTerminal,
@@ -595,6 +919,10 @@ function SortableProviderCard({
   activeProviderId,
   isDefaultModel,
   onSetAsDefault,
+  proxyUsageStats,
+  proxyRecentUsageStats,
+  modelsProbeStatus = "idle",
+  scrollHighlight = false,
 }: SortableProviderCardProps) {
   const {
     setNodeRef,
@@ -611,7 +939,12 @@ function SortableProviderCard({
   };
 
   return (
-    <div ref={setNodeRef} style={style}>
+    <div
+      ref={setNodeRef}
+      style={style}
+      data-provider-id={provider.id}
+      data-provider-current={isCurrent ? "true" : "false"}
+    >
       <ProviderCard
         provider={provider}
         isCurrent={isCurrent}
@@ -621,11 +954,14 @@ function SortableProviderCard({
         isOmoSlim={isOmoSlim}
         onSwitch={onSwitch}
         onEdit={onEdit}
+        onUpdate={onUpdate}
         onDelete={onDelete}
         onRemoveFromConfig={onRemoveFromConfig}
         onDisableOmo={onDisableOmo}
         onDisableOmoSlim={onDisableOmoSlim}
         onDuplicate={onDuplicate}
+        onCopyToApp={onCopyToApp}
+        visibleApps={visibleApps}
         onConfigureUsage={
           onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
         }
@@ -648,7 +984,12 @@ function SortableProviderCard({
         // OpenClaw: default model
         isDefaultModel={isDefaultModel}
         onSetAsDefault={onSetAsDefault}
+        proxyUsageStats={proxyUsageStats}
+        proxyRecentUsageStats={proxyRecentUsageStats}
+        modelsProbeStatus={modelsProbeStatus}
+        scrollHighlight={scrollHighlight}
       />
     </div>
   );
 }
+

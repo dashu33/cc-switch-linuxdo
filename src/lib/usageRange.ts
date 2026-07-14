@@ -14,7 +14,7 @@ function getStartOfLocalDayDate(nowMs: number): Date {
 }
 
 function getPresetLookbackStart(
-  preset: Exclude<UsageRangePreset, "today" | "1d" | "custom">,
+  preset: Exclude<UsageRangePreset, "5m" | "today" | "1d" | "custom">,
   nowMs: number,
 ): number {
   const dayCount = preset === "7d" ? 7 : preset === "14d" ? 14 : 30;
@@ -30,6 +30,11 @@ export function resolveUsageRange(
   const endDate = Math.floor(nowMs / 1000);
 
   switch (selection.preset) {
+    case "5m":
+      return {
+        startDate: endDate - 5 * 60,
+        endDate,
+      };
     case "today":
       return {
         startDate: Math.floor(getStartOfLocalDayDate(nowMs).getTime() / 1000),
@@ -65,6 +70,8 @@ export function getUsageRangePresetLabel(
   t: (key: string, options?: { defaultValue?: string }) => string,
 ): string {
   switch (preset) {
+    case "5m":
+      return t("usage.statsRange5m", { defaultValue: "近 5 分钟" });
     case "today":
       return t("usage.presetToday", { defaultValue: "当天" });
     case "1d":

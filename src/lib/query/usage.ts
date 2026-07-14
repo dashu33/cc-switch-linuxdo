@@ -12,6 +12,13 @@ const DEFAULT_REFETCH_INTERVAL_MS = 30000;
 type UsageQueryOptions = {
   refetchInterval?: number | false;
   refetchIntervalInBackground?: boolean;
+  enabled?: boolean;
+  /** 缓存新鲜时间；从设置返回等场景可直接用缓存，避免整页重拉 */
+  staleTime?: number;
+  /** 卸载后保留缓存时长（默认 React Query 5min，这里允许覆盖） */
+  gcTime?: number;
+  refetchOnMount?: boolean | "always";
+  refetchOnWindowFocus?: boolean;
 };
 
 type RequestLogsQueryArgs = {
@@ -268,6 +275,11 @@ export function useProviderStats(
         effective.model,
       );
     },
+    enabled: options?.enabled ?? true,
+    staleTime: options?.staleTime ?? 0,
+    gcTime: options?.gcTime,
+    refetchOnMount: options?.refetchOnMount,
+    refetchOnWindowFocus: options?.refetchOnWindowFocus,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -326,6 +338,11 @@ export function useRequestLogs({
       const effectiveFilters = { ...filters, ...resolveUsageRange(range) };
       return usageApi.getRequestLogs(effectiveFilters, page, pageSize);
     },
+    enabled: options?.enabled ?? true,
+    staleTime: options?.staleTime ?? 0,
+    gcTime: options?.gcTime,
+    refetchOnMount: options?.refetchOnMount,
+    refetchOnWindowFocus: options?.refetchOnWindowFocus,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS, // 每30秒自动刷新
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });

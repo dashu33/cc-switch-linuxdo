@@ -810,6 +810,13 @@ requires_openai_auth = true"#
             "config": config_toml
         });
 
+        // NewAPI 等网关默认可走 Chat Completions 路由转换；
+        // wire_api 仍固定 responses（Codex 客户端侧），上游格式由 meta.apiFormat 控制。
+        let mut meta = self.meta.clone().unwrap_or_default();
+        if meta.api_format.as_deref().unwrap_or("").trim().is_empty() {
+            meta.api_format = Some("openai_chat".to_string());
+        }
+
         Some(Provider {
             id: format!("universal-codex-{}", self.id),
             name: self.name.clone(),
@@ -819,7 +826,7 @@ requires_openai_auth = true"#
             created_at: self.created_at,
             sort_index: self.sort_index,
             notes: self.notes.clone(),
-            meta: self.meta.clone(),
+            meta: Some(meta),
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
@@ -1227,6 +1234,13 @@ mod tests {
                 .pointer("/auth/OPENAI_API_KEY")
                 .and_then(|item| item.as_str()),
             Some("api-key")
+        );
+        assert_eq!(
+            provider
+                .meta
+                .as_ref()
+                .and_then(|m| m.api_format.as_deref()),
+            Some("openai_chat")
         );
     }
 

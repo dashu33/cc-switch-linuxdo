@@ -1,0 +1,157 @@
+# NewAPI 快速导入
+
+> 文档状态：最后同步：API/KEY 标签解析 + Base64 解密 + 默认 `meta.apiFormat=openai_chat`
+
+## 目标
+
+在「添加供应商」按钮右侧提供 **快速导入** 入口：
+
+1. 直接读取系统剪贴板
+2. 解析出 `BASE URL` + `API KEY`
+3. 以 **统一供应商 / NewAPI** 预设 **直接创建并同步**
+4. **不打开** NewAPI 表单让用户手填
+
+产品路径语义：`添加供应商 → 统一供应商 → NewAPI`  
+实现上走 `findPresetByType("newapi")` + `createUniversalProviderFromPreset` + `universalProvidersApi.upsert/sync`。
+
+## 交互
+
+### 完整凭证一次粘贴
+
+剪贴板同时包含 URL 与 Key：
+
+1. 点击剪贴板图标按钮
+2. 解析成功 → 立即创建供应商并同步
+3. Toast：`已快速导入 NewAPI 供应商「…」并同步`
+
+### 分两次复制（半量等待）
+
+剪贴板只有 URL 或只有 Key：
+
+1. 第一次点击：识别到一半，进入 **等待状态**
+2. UI：按钮旋转动画 + 琥珀色提示文案
+3. 后台每 **800ms** 轮询剪贴板
+4. 捕捉到缺失的另一半 → 自动合并并创建
+5. 等待中再次点击 → **取消等待**
+
+| 已识别 | 等待提示 |
+|--------|----------|
+| 仅 URL | 已识别 BASE URL，请复制 API Key（将自动导入） |
+| 仅 Key | 已识别 API Key，请复制 BASE URL（将自动导入） |
+
+### 创建结果字段
+
+| 字段 | 规则 |
+|------|------|
+| 供应商类型 | NewAPI 预设（`providerType: "newapi"`） |
+| 名称 | `M月D日 HH:mm {baseUrl}`（例：`7月14日 23:40 https://sub2.zmoon.top/v1`） |
+| websiteUrl | 等于 `baseUrl`（不再写死官网） |
+| baseUrl / apiKey | 解析结果 |
+| meta.apiFormat | 默认 `openai_chat`（Chat Completions，需开启路由）；同步到 Codex 时写入子供应商 meta |
+
+## 剪贴板解析能力
+
+实现：`src/utils/parseNewApiClipboard.ts`
+
+支持常见粘贴形态：
+
+- 带标签文本：`URL: ...` / `API Key: ...` / 裸 `API：` / 裸 `KEY：`（含中文冒号）/ 中文「地址」「密钥」等
+- JSON（`baseUrl`/`apiKey` 及 snake_case 变体）
+- 自由文本混排
+- 裸域名：`sub2api.cursorlao.online`
+- Markdown 链接：`[Sub2API - AI API Gateway](https://sub2.zmoon.top/v1)`
+- Query 参数中的 key
+- `sk-` 开头 Key
+- Base64 Key（含 `c2st…` 即 `base64("sk-...")`，以及非 `sk-` 密文）自动解密；默认只解一层，避免二次解码变成乱码
+- 整段 Base64 文本解码后再解析
+- 非 `sk-` 明文长 token（如 `linuxdo-...`）
+
+### 样本
+
+**样本 A：域名 + Base64 Key**
+
+```text
+sub2api.cursorlao.online1Sub2API - AI API Gatewayc2stYWViODgyODhiZTZkNTFjOWVhNGM3ZjZjODlhMzI1ZmNkMGRlNzU4MjFhZTU5MmFlNzk4NmYwMjc3Y2I1YTVmYw==
+```
+
+期望：
+
+- baseUrl ≈ `https://sub2api.cursorlao.online`
+- apiKey 为解码后的 `sk-...`
+
+**样本 B：Markdown + 明文 Key**
+
+```text
+[Sub2API - AI API Gateway](https://sub2.zmoon.top/v1)
+linuxdo-suiranjintianbushixingqisidanshiVwo50quchiKFC
+```
+
+期望：
+
+- baseUrl = `https://sub2.zmoon.top/v1`
+- apiKey = `linuxdo-suiranjintianbushixingqisidanshiVwo50quchiKFC`
+
+**样本 C：`API：` + Markdown URL + `KEY：` Base64（非 sk）**
+
+```text
+API：[https://xai.nds.kdns.fr:8443/v1](https://xai.nds.kdns.fr:8443/v1)
+
+KEY：YkhOd1Q0OEhoWkZwM2lUZHRBNjFOR3p4Q1lpNkNyY2Q5WlJzQ0o0NG1xWjhHaDhtOHFYNmRGYmRzUGJZZEdMWQ==
+```
+
+期望：
+
+- baseUrl = `https://xai.nds.kdns.fr:8443/v1`
+- apiKey = `bHNwT48HhZFp3iTdtA61NGzxCYi6Crcd9ZRsCJ44mqZ8Gh8m8qX6dFbdsPbYdGLY`（单层 Base64 解密；不再二次解码）
+
+## API 面
+
+```ts
+parseNewApiClipboardPartial(text): PartialNewApiCredentials | null
+// 只识别到 URL 或 Key 时也返回；都没有则 null
+
+mergeNewApiCredentials(current, next): PartialNewApiCredentials
+// 合并半量结果，后者非空覆盖
+
+parseNewApiClipboard(text): ParsedNewApiCredentials | null
+// 完整凭证才返回；否则 null
+```
+
+## i18n Key
+
+命名空间：`provider.*`（四语：zh / zh-TW / en / ja）
+
+- `quickImport`
+- `quickImportEmptyClipboard`
+- `quickImportParseFailed`
+- `quickImportClipboardError`
+- `quickImportMissingPreset`
+- `quickImportCreated`
+- `quickImportWaitingUrl`
+- `quickImportWaitingKey`
+- `quickImportWaitingHint`
+- `quickImportCancelled`
+- `quickImportPartialNoMatch`
+
+## 测试
+
+```powershell
+pnpm exec vitest run src/utils/parseNewApiClipboard.test.ts
+```
+
+覆盖：标签/JSON/Base64/Markdown/半量/合并/`API：`+`KEY：` 非 sk Base64 等（14+ cases）。
+
+## 已知边界
+
+- 等待期间剪贴板无关内容会被跳过，不中断等待
+- 需系统剪贴板权限（`@tauri-apps/plugin-clipboard-manager` 的 `readText`）
+- 名称用当前本地时间，不使用剪贴板里的产品名（产品决策）
+- 不打开编辑表单；失败时 toast，不静默吞错
+
+## 相关文档
+
+- 代码地图：[CODEMAP.md](./CODEMAP.md)
+
+## 相关：默认 openai_chat
+
+见 [../provider-default-openai-chat/](../provider-default-openai-chat/)。

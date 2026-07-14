@@ -50,6 +50,20 @@ pub async fn copy_text_to_clipboard(text: String) -> Result<bool, String> {
     .map_err(|e| format!("剪贴板任务执行失败: {e}"))?
 }
 
+/// 读取系统剪贴板文本
+#[tauri::command]
+pub async fn read_text_from_clipboard() -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let mut clipboard =
+            arboard::Clipboard::new().map_err(|e| format!("访问系统剪贴板失败: {e}"))?;
+        clipboard
+            .get_text()
+            .map_err(|e| format!("读取系统剪贴板失败: {e}"))
+    })
+    .await
+    .map_err(|e| format!("剪贴板任务执行失败: {e}"))?
+}
+
 /// 检查更新
 #[tauri::command]
 pub async fn check_for_updates(handle: AppHandle) -> Result<bool, String> {
@@ -5327,3 +5341,4 @@ mod tests {
         );
     }
 }
+

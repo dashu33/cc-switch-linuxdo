@@ -17,3 +17,20 @@ export async function copyText(text: string): Promise<void> {
     }
   }
 }
+
+export async function readText(): Promise<string> {
+  try {
+    const text = await invoke<string>("read_text_from_clipboard");
+    return text ?? "";
+  } catch (nativeError) {
+    try {
+      return (await navigator.clipboard.readText()) ?? "";
+    } catch (webError) {
+      throw webError instanceof Error
+        ? webError
+        : nativeError instanceof Error
+          ? nativeError
+          : new Error(String(webError || nativeError));
+    }
+  }
+}

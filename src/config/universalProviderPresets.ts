@@ -100,6 +100,13 @@ export function createUniversalProviderFromPreset(
   apiKey: string,
   customName?: string,
 ): UniversalProvider {
+  // NewAPI / 自定义网关默认 Chat Completions（需开启路由）
+  // 同步到 Codex/Claude 时依赖 meta.apiFormat 决定代理转换
+  const defaultApiFormat =
+    preset.providerType === "newapi" || preset.providerType === "custom_gateway"
+      ? ("openai_chat" as const)
+      : undefined;
+
   return {
     id,
     name: customName || preset.name,
@@ -112,6 +119,7 @@ export function createUniversalProviderFromPreset(
     icon: preset.icon,
     iconColor: preset.iconColor,
     createdAt: Date.now(),
+    meta: defaultApiFormat ? { apiFormat: defaultApiFormat } : undefined,
   };
 }
 

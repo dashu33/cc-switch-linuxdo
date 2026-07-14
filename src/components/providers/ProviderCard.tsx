@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from "react";
-import { GripVertical, ChevronDown, ChevronUp } from "lucide-react";
+import { GripVertical, ChevronDown, ChevronUp, Pencil, Check, X, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type {
   DraggableAttributes,
@@ -8,7 +8,13 @@ import type {
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
+import { deepClone } from "@/utils/deepClone";
 import { ProviderActions } from "@/components/providers/ProviderActions";
+import { ProviderContextMenu } from "@/components/providers/ProviderContextMenu";
+import type { VisibleApps } from "@/types";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
@@ -17,6 +23,11 @@ import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
+import { CodexProviderQuickAdjust } from "@/components/providers/CodexProviderQuickAdjust";
+import { ProviderProxyUsageSummary } from "@/components/providers/ProviderProxyUsageSummary";
+import { ProviderRecentCallsPanel } from "@/components/providers/ProviderRecentCallsPanel";
+import type { ProviderStats } from "@/types/usage";
+import type { ModelsProbeStatus } from "@/hooks/useFetchCurrentProviderModels";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
 import {
   extractCodexBaseUrl,
@@ -44,6 +55,7 @@ interface ProviderCardProps {
   isOmoSlim?: boolean;
   onSwitch: (provider: Provider) => void;
   onEdit: (provider: Provider) => void;
+  onUpdate?: (provider: Provider) => void | Promise<void>;
   onDelete: (provider: Provider) => void;
   onRemoveFromConfig?: (provider: Provider) => void;
   onDisableOmo?: () => void;
@@ -51,6 +63,8 @@ interface ProviderCardProps {
   onConfigureUsage: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onDuplicate: (provider: Provider) => void;
+  onCopyToApp?: (provider: Provider, targetApp: AppId) => void;
+  visibleApps?: VisibleApps;
   onTest?: (provider: Provider) => void;
   onOpenTerminal?: (provider: Provider) => void;
   isTesting?: boolean;
@@ -65,6 +79,14 @@ interface ProviderCardProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+  /** 本地 proxy/session 用量统计（与用量统计页同口径） */
+  proxyUsageStats?: ProviderStats;
+  /** 近 5 分钟本地用量（即时成功率） */
+  proxyRecentUsageStats?: ProviderStats;
+  /** 一键拉模型探测结果：成功绿边框 / 失败红边框 */
+  modelsProbeStatus?: ModelsProbeStatus;
+  /** 快速定位时的短暂高亮 */
+  scrollHighlight?: boolean;
 }
 
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
@@ -143,6 +165,7 @@ export function ProviderCard({
   isOmoSlim = false,
   onSwitch,
   onEdit,
+  onUpdate,
   onDelete,
   onRemoveFromConfig,
   onDisableOmo,
@@ -150,6 +173,8 @@ export function ProviderCard({
   onConfigureUsage,
   onOpenWebsite,
   onDuplicate,
+  onCopyToApp,
+  visibleApps,
   onTest,
   onOpenTerminal,
   isTesting,
@@ -164,8 +189,21 @@ export function ProviderCard({
   // OpenClaw: default model
   isDefaultModel,
   onSetAsDefault,
+  proxyUsageStats,
+  proxyRecentUsageStats,
+  modelsProbeStatus = "idle",
+  scrollHighlight = false,
 }: ProviderCardProps) {
   const { t } = useTranslation();
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState(provider.name);
+  const [isSavingName, setIsSavingName] = useState(false);
+
+  useEffect(() => {
+    if (!isRenaming) {
+      setRenameValue(provider.name);
+    }
+  }, [provider.name, isRenaming]);
 
   // OMO and OMO Slim share the same card behavior
   const isAnyOmo = isOmo || isOmoSlim;
@@ -304,17 +342,88 @@ export function ProviderCard({
       !isProxyTakeover &&
       (isActiveProvider || hasPersistentConfigHighlight));
 
-  return (
+  // skipped 与 idle 一样不抢边框色
+  const effectiveProbeStatus =
+    modelsProbeStatus === "skipped" ? "idle" : modelsProbeStatus;
+
+  const canRename =
+    Boolean(onUpdate) && !isHermesReadOnly && !isAnyOmo;
+
+  const startRename = () => {
+    if (!canRename) return;
+    setRenameValue(provider.name);
+    setIsRenaming(true);
+  };
+
+  const cancelRename = () => {
+    setIsRenaming(false);
+    setRenameValue(provider.name);
+  };
+
+  const saveRename = async () => {
+    if (!onUpdate || isSavingName) return;
+    const nextName = renameValue.trim();
+    if (!nextName) {
+      toast.error(
+        t("provider.renameEmpty", {
+          defaultValue: "供应商名称不能为空",
+        }),
+      );
+      return;
+    }
+    if (nextName === provider.name) {
+      setIsRenaming(false);
+      return;
+    }
+    setIsSavingName(true);
+    try {
+      const next = deepClone(provider) as Provider;
+      next.name = nextName;
+      await onUpdate(next);
+      setIsRenaming(false);
+      toast.success(
+        t("provider.renameSuccess", {
+          defaultValue: "名称已更新",
+        }),
+      );
+    } catch (err) {
+      console.warn("[ProviderCard] rename failed", err);
+      toast.error(
+        t("provider.renameFailed", {
+          defaultValue: "名称更新失败",
+        }),
+      );
+    } finally {
+      setIsSavingName(false);
+    }
+  };
+
+  const card = (
     <div
+      data-provider-id={provider.id}
+      data-provider-current={isCurrent ? "true" : "false"}
       className={cn(
-        "relative overflow-hidden rounded-xl border border-border p-4 transition-all duration-300",
+        "relative overflow-hidden rounded-xl border border-border p-4 transition-all duration-300 scroll-mt-24",
         "bg-card text-card-foreground group",
+        scrollHighlight &&
+          "ring-2 ring-primary shadow-lg shadow-primary/25 border-primary/70 animate-pulse",
         isAutoFailoverEnabled || isProxyTakeover
           ? "hover:border-emerald-500/50"
           : "hover:border-border-active",
-        shouldUseGreen &&
+        effectiveProbeStatus === "success" &&
+          "border-emerald-500 border-2 shadow-md shadow-emerald-500/25 ring-2 ring-emerald-500/50",
+        effectiveProbeStatus === "empty" &&
+          "border-orange-500 border-2 shadow-md shadow-orange-500/25 ring-2 ring-orange-500/50",
+        effectiveProbeStatus === "failed" &&
+          "border-red-500 border-2 shadow-md shadow-red-500/25 ring-2 ring-red-500/50",
+        effectiveProbeStatus === "probing" &&
+          "border-amber-500 border-2 shadow-sm shadow-amber-500/20 animate-pulse",
+        effectiveProbeStatus === "idle" &&
+          shouldUseGreen &&
           "border-emerald-500/60 shadow-sm shadow-emerald-500/10",
-        shouldUseBlue && "border-blue-500/60 shadow-sm shadow-blue-500/10",
+        effectiveProbeStatus === "idle" &&
+          shouldUseBlue &&
+          "border-blue-500/60 shadow-sm shadow-blue-500/10",
         !(isActiveProvider || hasPersistentConfigHighlight) &&
           "hover:shadow-sm",
         dragHandleProps?.isDragging &&
@@ -324,15 +433,24 @@ export function ProviderCard({
       <div
         className={cn(
           "absolute inset-0 bg-gradient-to-r to-transparent transition-opacity duration-500 pointer-events-none",
-          shouldUseGreen && "from-emerald-500/10",
-          shouldUseBlue && "from-blue-500/10",
-          !shouldUseGreen && !shouldUseBlue && "from-primary/10",
-          isActiveProvider || hasPersistentConfigHighlight
+          effectiveProbeStatus === "success" && "from-emerald-500/15",
+          effectiveProbeStatus === "empty" && "from-orange-500/15",
+          effectiveProbeStatus === "failed" && "from-red-500/15",
+          effectiveProbeStatus === "probing" && "from-amber-500/10",
+          effectiveProbeStatus === "idle" && shouldUseGreen && "from-emerald-500/10",
+          effectiveProbeStatus === "idle" && shouldUseBlue && "from-blue-500/10",
+          effectiveProbeStatus === "idle" &&
+            !shouldUseGreen &&
+            !shouldUseBlue &&
+            "from-primary/10",
+          (effectiveProbeStatus !== "idle" ||
+            isActiveProvider ||
+            hasPersistentConfigHighlight)
             ? "opacity-100"
             : "opacity-0",
         )}
       />
-      <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="relative flex flex-col gap-3 sm:flex-row sm:items-stretch sm:justify-between">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <button
             type="button"
@@ -359,9 +477,88 @@ export function ProviderCard({
 
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex flex-wrap items-center gap-2 min-h-7">
-              <h3 className="text-base font-semibold leading-none">
-                {provider.name}
-              </h3>
+              {isRenaming ? (
+                <div
+                  className="flex min-w-0 max-w-full items-center gap-1"
+                  onClick={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
+                  <Input
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    className="h-7 w-[min(100%,16rem)] px-2 text-sm font-semibold"
+                    autoFocus
+                    disabled={isSavingName}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void saveRename();
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        cancelRename();
+                      }
+                    }}
+                    aria-label={t("provider.renameAria", {
+                      defaultValue: "编辑供应商名称",
+                    })}
+                  />
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7 shrink-0 text-emerald-600 hover:text-emerald-700"
+                    disabled={isSavingName}
+                    onClick={() => void saveRename()}
+                    title={t("common.save", { defaultValue: "保存" })}
+                  >
+                    {isSavingName ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Check className="h-3.5 w-3.5" />
+                    )}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7 shrink-0 text-muted-foreground"
+                    disabled={isSavingName}
+                    onClick={cancelRename}
+                    title={t("common.cancel", { defaultValue: "取消" })}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  {canRename && (
+                    <button
+                      type="button"
+                      className={cn(
+                        "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md",
+                        "text-muted-foreground/70 hover:bg-muted hover:text-foreground",
+                        "transition-colors",
+                      )}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        startRename();
+                      }}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      title={t("provider.rename", {
+                        defaultValue: "编辑名称",
+                      })}
+                      aria-label={t("provider.rename", {
+                        defaultValue: "编辑名称",
+                      })}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                  <h3 className="text-base font-semibold leading-none">
+                    {provider.name}
+                  </h3>
+                </>
+              )}
 
               {isOmo && (
                 <span className="inline-flex items-center rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
@@ -489,12 +686,36 @@ export function ProviderCard({
                 <span className="min-w-0 truncate">{displayUrl}</span>
               </button>
             )}
+
+            {appId === "codex" &&
+              provider.category !== "official" &&
+              onUpdate && (
+                <CodexProviderQuickAdjust
+                  provider={provider}
+                  onUpdate={onUpdate}
+                  modelsProbeStatus={modelsProbeStatus}
+                />
+              )}
+
+            <ProviderProxyUsageSummary
+              stats={proxyUsageStats}
+              recentStats={proxyRecentUsageStats}
+            />
           </div>
         </div>
 
-        <div className="flex items-center ml-auto min-w-0 gap-3">
-          <div className="ml-auto">
-            <div className="flex items-center gap-1">
+        {/* 右侧：最近调用占位吃满行高；配额常显叠顶；操作按钮 hover 叠上（逻辑同前） */}
+        <div className="relative ml-auto flex w-[200px] sm:w-[280px] shrink-0 self-stretch min-h-[104px]">
+          <ProviderRecentCallsPanel
+            appId={appId}
+            providerName={provider.name}
+            isCurrent={isCurrent}
+            className="absolute inset-0"
+          />
+
+          {/* 配额/套餐：始终可见，叠在最近调用上方 */}
+          <div className="pointer-events-auto absolute right-1 top-1 z-10 max-w-[calc(100%-0.5rem)]">
+            <div className="flex max-w-full items-center gap-1 rounded-md bg-card/85 px-1 py-0.5 shadow-sm ring-1 ring-border/40 backdrop-blur-sm">
               {isCopilot ? (
                 <CopilotQuotaFooter
                   meta={provider.meta}
@@ -561,7 +782,9 @@ export function ProviderCard({
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 flex-shrink-0 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-opacity duration-200">
+          {/* 操作按钮：hover 显示，层级在最近调用之上 */}
+          <div className="pointer-events-none absolute inset-x-1 bottom-1 z-20 flex items-center justify-end opacity-0 transition-opacity duration-200 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+            <div className="flex items-center gap-1.5 rounded-md bg-card/90 px-1 py-0.5 shadow-sm ring-1 ring-border/50 backdrop-blur-sm">
             <ProviderActions
               appId={appId}
               isCurrent={isCurrent}
@@ -608,6 +831,7 @@ export function ProviderCard({
               isDefaultModel={isDefaultModel}
               onSetAsDefault={onSetAsDefault}
             />
+            </div>
           </div>
         </div>
       </div>
@@ -626,5 +850,21 @@ export function ProviderCard({
         </div>
       )}
     </div>
+  );
+
+  if (!onCopyToApp) {
+    return card;
+  }
+
+  return (
+    <ProviderContextMenu
+      provider={provider}
+      appId={appId}
+      visibleApps={visibleApps}
+      onDuplicate={onDuplicate}
+      onCopyToApp={onCopyToApp}
+    >
+      {card}
+    </ProviderContextMenu>
   );
 }

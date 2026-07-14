@@ -20,25 +20,14 @@ import type {
 } from "@/types";
 import { usageKeys } from "@/lib/query/usage";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { compareProviders } from "@/utils/providerSort";
 
 const sortProviders = (
   providers: Record<string, Provider>,
 ): Record<string, Provider> => {
+  // sortIndex first, then import/create time (createdAt).
   const sortedEntries = Object.values(providers)
-    .sort((a, b) => {
-      const indexA = a.sortIndex ?? Number.MAX_SAFE_INTEGER;
-      const indexB = b.sortIndex ?? Number.MAX_SAFE_INTEGER;
-      if (indexA !== indexB) {
-        return indexA - indexB;
-      }
-
-      const timeA = a.createdAt ?? 0;
-      const timeB = b.createdAt ?? 0;
-      if (timeA === timeB) {
-        return a.name.localeCompare(b.name, "zh-CN");
-      }
-      return timeA - timeB;
-    })
+    .sort((a, b) => compareProviders(a, b, "zh-CN"))
     .map((provider) => [provider.id, provider] as const);
 
   return Object.fromEntries(sortedEntries);
@@ -323,3 +312,4 @@ export const useSessionMessagesQuery = (
     staleTime: 30 * 1000,
   });
 };
+

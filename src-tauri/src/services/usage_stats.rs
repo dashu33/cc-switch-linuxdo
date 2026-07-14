@@ -85,6 +85,11 @@ pub struct ProviderStats {
     pub total_cost: String,
     pub success_rate: f32,
     pub avg_latency_ms: u64,
+    /// 平均首字响应（ms）。仅来自明细日志 first_token_ms；rollup 无该字段时为 None。
+    pub avg_first_token_ms: Option<u64>,
+    /// 最近一次请求时间（unix 秒）。明细取 MAX(created_at)；
+    /// 仅有日聚合时回落到该日 23:59:59 的近似时间。
+    pub last_used_at: Option<i64>,
 }
 
 /// 模型统计
@@ -1251,7 +1256,11 @@ impl Database {
                 SUM(success_count) as success_count,
                 CASE WHEN SUM(request_count) > 0
                     THEN SUM(latency_sum) / SUM(request_count)
-                    ELSE 0 END as avg_latency
+                    ELSE 0 END as avg_latency,
+                CASE WHEN SUM(first_token_count) > 0
+                    THEN SUM(first_token_sum) * 1.0 / SUM(first_token_count)
+                    ELSE NULL END as avg_first_token,
+                MAX(last_activity) as last_used_at
             FROM (
                 SELECT l.provider_id, l.app_type,
                     {detail_pname} as provider_name,
@@ -1259,7 +1268,10 @@ impl Database {
                     COALESCE(SUM({fresh_input_detail} + l.output_tokens), 0) as total_tokens,
                     COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost,
                     COALESCE(SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END), 0) as success_count,
-                    COALESCE(SUM(l.latency_ms), 0) as latency_sum
+                    COALESCE(SUM(l.latency_ms), 0) as latency_sum,
+                    COALESCE(SUM(l.first_token_ms), 0) as first_token_sum,
+                    COALESCE(SUM(CASE WHEN l.first_token_ms IS NOT NULL THEN 1 ELSE 0 END), 0) as first_token_count,
+                    MAX(l.created_at) as last_activity
                 FROM proxy_request_logs l
                 LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
                 {detail_where}
@@ -1271,7 +1283,10 @@ impl Database {
                     COALESCE(SUM({fresh_input_rollup} + r.output_tokens), 0),
                     COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0),
                     COALESCE(SUM(r.success_count), 0),
-                    COALESCE(SUM(r.avg_latency_ms * r.request_count), 0)
+                    COALESCE(SUM(r.avg_latency_ms * r.request_count), 0),
+                    0 as first_token_sum,
+                    0 as first_token_count,
+                    MAX(CAST(strftime('%s', r.date || ' 23:59:59') AS INTEGER)) as last_activity
                 FROM usage_daily_rollups r
                 LEFT JOIN providers p2 ON r.provider_id = p2.id AND r.app_type = p2.app_type
                 {rollup_where}
@@ -1294,6 +1309,10 @@ impl Database {
                 0.0
             };
 
+            let avg_first_token_ms = row
+                .get::<_, Option<f64>>(8)?
+                .map(|v| v.round().max(0.0) as u64);
+
             Ok(ProviderStats {
                 provider_id: row.get(0)?,
                 provider_name: row.get(2)?,
@@ -1302,6 +1321,8 @@ impl Database {
                 total_cost: format!("{:.6}", row.get::<_, f64>(5)?),
                 success_rate,
                 avg_latency_ms: row.get::<_, f64>(7)? as u64,
+                avg_first_token_ms,
+                last_used_at: row.get::<_, Option<i64>>(9)?,
             })
         };
 
@@ -3636,6 +3657,7 @@ mod tests {
         assert_eq!(stats[0].provider_id, "p1");
         assert_eq!(stats[0].request_count, 1);
         assert_eq!(stats[0].total_tokens, 275);
+        assert_eq!(stats[0].last_used_at, Some(2000));
 
         Ok(())
     }

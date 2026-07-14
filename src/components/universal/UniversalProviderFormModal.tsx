@@ -17,6 +17,7 @@ import {
   type UniversalProviderPreset,
 } from "@/config/universalProviderPresets";
 import { deepClone } from "@/utils/deepClone";
+import type { ParsedNewApiCredentials } from "@/utils/parseNewApiClipboard";
 
 interface UniversalProviderFormModalProps {
   isOpen: boolean;
@@ -25,6 +26,8 @@ interface UniversalProviderFormModalProps {
   onSaveAndSync?: (provider: UniversalProvider) => void;
   editingProvider?: UniversalProvider | null;
   initialPreset?: UniversalProviderPreset | null;
+  /** Prefill values for quick import (new mode only) */
+  initialCredentials?: ParsedNewApiCredentials | null;
 }
 
 export function UniversalProviderFormModal({
@@ -34,6 +37,7 @@ export function UniversalProviderFormModal({
   onSaveAndSync,
   editingProvider,
   initialPreset,
+  initialCredentials,
 }: UniversalProviderFormModalProps) {
   const isDarkMode = useDarkMode();
   const { t } = useTranslation();
@@ -85,9 +89,9 @@ export function UniversalProviderFormModal({
       // 新建模式：使用传入的预设或默认选择第一个预设
       const defaultPreset = initialPreset || universalProviderPresets[0];
       setSelectedPreset(defaultPreset);
-      setName(defaultPreset.name);
-      setBaseUrl("");
-      setApiKey("");
+      setName(initialCredentials?.name?.trim() || defaultPreset.name);
+      setBaseUrl(initialCredentials?.baseUrl || "");
+      setApiKey(initialCredentials?.apiKey || "");
       setWebsiteUrl(defaultPreset.websiteUrl || "");
       setNotes("");
       setClaudeEnabled(defaultPreset.defaultApps.claude);
@@ -95,7 +99,7 @@ export function UniversalProviderFormModal({
       setGeminiEnabled(defaultPreset.defaultApps.gemini);
       setModels(deepClone(defaultPreset.defaultModels));
     }
-  }, [editingProvider, initialPreset, isOpen]);
+  }, [editingProvider, initialPreset, initialCredentials, isOpen]);
 
   // 选择预设
   const handlePresetSelect = useCallback(

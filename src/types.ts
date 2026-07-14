@@ -15,8 +15,8 @@ export interface Provider {
   websiteUrl?: string;
   // 新增：供应商分类（用于差异化提示/能力开关）
   category?: ProviderCategory;
-  createdAt?: number; // 添加时间戳（毫秒）
-  sortIndex?: number; // 排序索引（用于自定义拖拽排序）
+  createdAt?: number; // 导入/创建时间戳（毫秒；sortIndex 相同时的第二排序键）
+  sortIndex?: number; // 排序索引（第一优先级；越小越靠前，用于自定义拖拽排序）
   // 备注信息
   notes?: string;
   // 新增：是否为商业合作伙伴
@@ -731,3 +731,4 @@ export interface HermesMemoryLimits {
   memoryEnabled: boolean;
   userEnabled: boolean;
 }
+
