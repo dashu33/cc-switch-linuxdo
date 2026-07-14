@@ -1,0 +1,258 @@
+name: Personal Windows Release
+
+# Self-use Windows-only build+publish for personal tags.
+# Trigger: push tags matching v*-personal* (e.g. v3.17.1-personal.1)
+# Avoids macOS/Apple signing requirements of the full multi-platform release.yml.
+
+on:
+  push:
+    tags:
+      - 'v*-personal*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: personal-release-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    name: Build Windows x64
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.12.3
+          run_install: false
+
+      - name: Get pnpm store directory
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare Tauri signing key
+        shell: bash
+        run: |
+          if [ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
+            echo "❌ TAURI_SIGNING_PRIVATE_KEY Secret 为空或不存在" >&2
+            echo "请到仓库 Settings > Secrets and variables > Actions 配置" >&2
+            exit 1
+          fi
+
+          RAW="${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"
+          KEY_PATH="$RUNNER_TEMP/tauri_signing.key"
+
+          if echo "$RAW" | head -n1 | grep -q '^untrusted comment:'; then
+            printf '%s\n' "$RAW" > "$KEY_PATH"
+            echo "✅ 使用原始两行密钥文件格式"
+          else
+            if DECODED=$(printf '%s' "$RAW" | (base64 --decode 2>/dev/null || base64 -D 2>/dev/null)) \
+               && echo "$DECODED" | head -n1 | grep -q '^untrusted comment:'; then
+              printf '%s\n' "$DECODED" > "$KEY_PATH"
+              echo "✅ 成功解码 base64 包裹密钥"
+            else
+              if echo "$RAW" | grep -Eq '^[A-Za-z0-9+/=]+$'; then
+                ONE=$(printf '%s' "$RAW" | tr -d '\r\n')
+                printf '%s\n%s\n' "untrusted comment: tauri signing key" "$ONE" > "$KEY_PATH"
+                echo "✅ 使用一行 Base64 私钥，已构造两行文件"
+              else
+                echo "❌ TAURI_SIGNING_PRIVATE_KEY 格式无法识别" >&2
+                exit 1
+              fi
+            fi
+          fi
+
+          if command -v base64 >/dev/null 2>&1; then
+            KEY_B64=$(base64 < "$KEY_PATH" | tr -d '\r\n')
+          else
+            KEY_B64=$(KEY_PATH="$KEY_PATH" node -e "process.stdout.write(require('fs').readFileSync(process.env.KEY_PATH).toString('base64'))")
+          fi
+          echo "TAURI_SIGNING_PRIVATE_KEY=$KEY_B64" >> "$GITHUB_ENV"
+          if [ -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+          fi
+          echo "✅ Tauri signing key prepared"
+
+      - name: Build Tauri App (Windows x64)
+        shell: pwsh
+        run: pnpm tauri build
+
+      - name: Prepare Windows Assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          $VERSION = $env:GITHUB_REF_NAME
+          $targetRoot = 'src-tauri/target/release'
+
+          $msi = Get-ChildItem -Path (Join-Path $targetRoot 'bundle/msi') -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -eq $msi) {
+            throw 'No Windows MSI installer found'
+          }
+          $dest = "CC-Switch-$VERSION-Windows.msi"
+          Copy-Item $msi.FullName (Join-Path release-assets $dest)
+          Write-Host "Installer copied: $dest"
+          $sigPath = "$($msi.FullName).sig"
+          if (Test-Path $sigPath) {
+            Copy-Item $sigPath (Join-Path release-assets ("$dest.sig"))
+            Write-Host "Signature copied: $dest.sig"
+          } else {
+            Write-Warning "Signature not found for $($msi.Name)"
+          }
+
+          $nsis = Get-ChildItem -Path (Join-Path $targetRoot 'bundle/nsis') -Recurse -Include *.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -ne $nsis) {
+            $nsisDest = "CC-Switch-$VERSION-Windows-Setup.exe"
+            Copy-Item $nsis.FullName (Join-Path release-assets $nsisDest)
+            Write-Host "NSIS installer copied: $nsisDest"
+            $nsisSig = "$($nsis.FullName).sig"
+            if (Test-Path $nsisSig) {
+              Copy-Item $nsisSig (Join-Path release-assets ("$nsisDest.sig"))
+            }
+          }
+
+          $exe = Get-ChildItem -Path $targetRoot -Filter 'cc-switch.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -eq $exe) {
+            $exe = Get-ChildItem -Path $targetRoot -Filter '*.exe' -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -notmatch 'uninstall|setup' } |
+              Select-Object -First 1
+          }
+          if ($null -ne $exe) {
+            $portableDir = 'release-assets/CC-Switch-Portable'
+            New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+            Copy-Item $exe.FullName $portableDir
+            @(
+              '# CC Switch portable build marker',
+              'portable=true',
+              'arch=x86_64'
+            ) | Set-Content -Path (Join-Path $portableDir 'portable.ini') -Encoding utf8
+            $portableZip = "release-assets/CC-Switch-$VERSION-Windows-Portable.zip"
+            Compress-Archive -Path "$portableDir/*" -DestinationPath $portableZip -Force
+            Remove-Item -Recurse -Force $portableDir
+            Write-Host "Portable zip created"
+          } else {
+            Write-Warning 'Portable exe not found'
+          }
+
+          Get-ChildItem release-assets | Format-Table Name,Length
+
+      - name: Upload release artifacts to workflow
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-assets-Windows-x64
+          path: release-assets/*
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish Personal GitHub Release
+    runs-on: ubuntu-22.04
+    needs: build-windows
+    permissions:
+      contents: write
+    steps:
+      - name: Download built release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-assets-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: List downloaded release artifacts
+        shell: bash
+        run: ls -la release-assets
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: CC Switch ${{ github.ref_name }} (personal)
+          prerelease: true
+          body: |
+            ## CC Switch ${{ github.ref_name }} · 自用分支
+
+            基于 `codex/personal-provider-ux` 的个人增强包（Windows x64）。
+
+            ### 下载
+            - **Windows 安装包**: `CC-Switch-${{ github.ref_name }}-Windows.msi`
+            - **绿色版**: `CC-Switch-${{ github.ref_name }}-Windows-Portable.zip`
+
+            ### 更新摘要
+            - NewAPI 剪贴板快速导入（URL+Key / Base64 / 半量等待）
+            - Codex 卡片快速调整（上游格式 / 模型 / 获取按钮状态色）
+            - 一键拉取模型批量探测（卡边框 + 获取按钮着色）
+            - 供应商卡片本地用量与可用性（近5分钟成功率、总成功率、延迟、最近调用）
+            - 快速定位当前供应商 / 列表滚动条 / 行内改名
+            - 跨应用复制供应商（如 Codex → Claude）
+            - 新建默认 `openai_chat`（Chat Completions 需路由）
+            - `FEATURE/` 文档已随代码上传，便于对齐主程序
+
+            > 本 Release 为自用 prerelease；macOS/Linux 多平台请走完整 `release.yml`（需 Apple 签名等密钥）。
+          files: release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate minimal latest.json (Windows only)
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          API="https://api.github.com/repos/${REPO}/releases/tags/${TAG}"
+          assets_json=$(gh api "$API" --jq '.assets')
+          msi_url=$(echo "$assets_json" | jq -r '.[] | select(.name | test("Windows\\.msi$")) | .browser_download_url' | head -1)
+          msi_sig=$(echo "$assets_json" | jq -r '.[] | select(.name | test("Windows\\.msi\\.sig$")) | .browser_download_url' | head -1)
+          sig_content=""
+          if [ -n "$msi_sig" ] && [ "$msi_sig" != "null" ]; then
+            sig_content=$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/octet-stream" "$msi_sig" || true)
+          fi
+          pub_date=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          version="${TAG#v}"
+          if [ -n "$msi_url" ] && [ "$msi_url" != "null" ]; then
+            jq -n \
+              --arg version "$version" \
+              --arg notes "Personal Windows release ${TAG}" \
+              --arg pub_date "$pub_date" \
+              --arg url "$msi_url" \
+              --arg signature "$sig_content" \
+              '{
+                version: $version,
+                notes: $notes,
+                pub_date: $pub_date,
+                platforms: {
+                  "windows-x86_64": {
+                    signature: $signature,
+                    url: $url
+                  }
+                }
+              }' > latest.json
+            echo "Generated latest.json:"
+            cat latest.json
+            gh release upload "$TAG" latest.json --clobber --repo "$REPO"
+          else
+            echo "No Windows MSI asset found; skip latest.json"
+          fi
