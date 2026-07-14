@@ -31,7 +31,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && (inputs.tag != '' && inputs.tag || github.ref) || github.ref }}
+          # For workflow_dispatch, build the branch/ref selected in Actions UI (has the latest CI fix).
+          # The optional tag input is only used later when attaching assets to a Release.
+          ref: ${{ github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -41,7 +43,17 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
+          # Match repo rust-toolchain.toml so targets land on the active toolchain
+          toolchain: "1.95"
           targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Ensure Apple Rust targets on active toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup show
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          rustup target list --installed
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -97,14 +109,16 @@ jobs:
           if [ -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" ]; then
             echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" >> "$GITHUB_ENV"
           fi
-          echo "✅ Tauri updater signing key prepared (Apple code-sign intentionally skipped)"
+          echo "✅ Tauri updater signing key prepared (Apple code-sign intentionally ad-hoc)"
 
       - name: Build Tauri App (macOS universal, unsigned)
         shell: bash
         env:
-          # Prevent Apple identity auto-discovery / notarization paths
+          # Ad-hoc Apple code-sign (no Developer ID / no notarization).
+          # Empty APPLE_SIGNING_IDENTITY still enters the signing path and fails
+          # with: Signing with identity "" / item not found in keychain.
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-          APPLE_SIGNING_IDENTITY: ''
+          APPLE_SIGNING_IDENTITY: '-'
           APPLE_ID: ''
           APPLE_PASSWORD: ''
           APPLE_TEAM_ID: ''
@@ -113,13 +127,20 @@ jobs:
           CI: 'true'
         run: |
           set -euo pipefail
-          echo "Building unsigned universal macOS app..."
-          # Prefer universal; if linker/tooling fails, fall back to arm64-only
+          echo "Active rustc / targets:"
+          rustc -vV
+          rustup target list --installed
+          echo "Building ad-hoc signed universal macOS app..."
+          # Prefer universal; if linker/tooling fails, fall back to arm64-only.
           if pnpm tauri build --target universal-apple-darwin --bundles app; then
             echo "✅ universal-apple-darwin app bundle built"
           else
             echo "⚠️ universal build failed, falling back to aarch64-apple-darwin"
-            pnpm tauri build --target aarch64-apple-darwin --bundles app
+            if ! pnpm tauri build --target aarch64-apple-darwin --bundles app; then
+              echo "❌ aarch64-apple-darwin build also failed" >&2
+              exit 1
+            fi
+            echo "✅ aarch64-apple-darwin app bundle built"
           fi
 
       - name: Prepare unsigned macOS assets
