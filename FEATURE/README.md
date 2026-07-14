@@ -19,6 +19,7 @@
 | 供应商列表可见滚动条 | [provider-list-scrollbar](./provider-list-scrollbar/) | 已落地 | provider 页显示细滚动条便于手动浏览 | 否 |
 | 供应商名称行内编辑 | [provider-inline-rename](./provider-inline-rename/) | 已落地 | 名称前铅笔按钮，Enter 保存 / Esc 取消 | 否 |
 | 新建默认 openai_chat | [provider-default-openai-chat](./provider-default-openai-chat/) | 已落地 | NewAPI/网关新建默认 Chat Completions（需路由） | 否（Rust 同步补全已有） |
+| 同步用量日聚合 | [sync-usage-daily-rollups](./sync-usage-daily-rollups/) | 已落地 | WebDAV/S3 同步 `usage_daily_rollups`；明细日志仍本机 | **是** |
 
 ## 近期产品决策摘要
 
@@ -30,6 +31,7 @@
 6. **一键拉模型**：对 **全部** 可探测供应商批量并发（4），不再只测「当前」；每卡独立边框色；Codex「获取」同步。
 7. **快速定位**：嵌套滚动祖先全滚 + 多拍重试 + 短暂高亮。
 8. **行内改名**：铅笔标记；Hermes 只读 / OMO 不显示。
+9. **同步用量日聚合（Plan A）**：WebDAV/S3 导出/导入包含 `usage_daily_rollups`；`proxy_request_logs` 仍本机；导入时远端 rollup 覆盖本机 rollup 快照；不因 rollup 写入触发自动同步。
 
 ## 主程序更新对齐建议
 
@@ -46,9 +48,10 @@
 
 1. `newapi-quick-import` / `provider-default-openai-chat` / `copy-provider-to-app`（工具函数与默认 meta）
 2. `provider-card-proxy-usage`（若有 Rust 字段）
-3. `provider-fetch-models-probe` + `codex-provider-quick-adjust`（探测↔获取色）
-4. `provider-scroll-to-current` + `provider-list-scrollbar`
-5. `provider-inline-rename`
+3. `sync-usage-daily-rollups`（同步 skip/preserve 常量）
+4. `provider-fetch-models-probe` + `codex-provider-quick-adjust`（探测↔获取色）
+5. `provider-scroll-to-current` + `provider-list-scrollbar`
+6. `provider-inline-rename`
 
 ## 开发与验证
 
@@ -70,6 +73,10 @@ pnpm exec vitest run `
   src/utils/parseNewApiClipboard.test.ts `
   src/utils/providerConfigUtils.test.ts `
   src/utils/copyProviderToApp.test.ts
+
+# 同步 rollup（Rust）
+cd src-tauri
+cargo test sync_import_preserves_local_only_tables -- --nocapture
 ```
 
 ## 目录结构

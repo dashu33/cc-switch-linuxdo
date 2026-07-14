@@ -21,7 +21,6 @@ const SYNC_SKIP_TABLES: &[&str] = &[
     "stream_check_logs",
     "provider_health",
     "proxy_live_backup",
-    "usage_daily_rollups",
 ];
 
 /// Tables whose local data is preserved (restored from local snapshot) during WebDAV import.
@@ -30,7 +29,6 @@ const SYNC_PRESERVE_TABLES: &[&str] = &[
     "proxy_request_logs",
     "stream_check_logs",
     "proxy_live_backup",
-    "usage_daily_rollups",
 ];
 
 /// A database backup entry for the UI
@@ -704,8 +702,22 @@ mod tests {
                  VALUES ('remote-provider', 'claude', 'Remote Provider', '{}', '{}')",
                 [],
             )?;
+            // Plan A: daily rollups travel with WebDAV/S3 sync so another machine
+            // can show provider availability/stats without raw request logs.
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model, request_count, success_count,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, avg_latency_ms
+                ) VALUES ('2026-03-02', 'claude', 'remote-provider', 'claude-3', 3, 2, 300, 150, 0, 0, '0.03', 90)",
+                [],
+            )?;
         }
         let remote_sql = remote_db.export_sql_string_for_sync()?;
+        assert!(
+            remote_sql.contains("INSERT INTO usage_daily_rollups"),
+            "sync export should include usage_daily_rollups rows"
+        );
 
         let local_db = Database::memory()?;
         {
@@ -755,7 +767,13 @@ mod tests {
             "remote config should be imported"
         );
 
-        let (request_logs, rollups, stream_logs): (i64, i64, i64) = {
+        let (request_logs, rollups, stream_logs, remote_rollup, local_rollup): (
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+        ) = {
             let conn = crate::database::lock_conn!(local_db.conn);
             let request_logs =
                 conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
@@ -769,13 +787,37 @@ mod tests {
                 conn.query_row("SELECT COUNT(*) FROM stream_check_logs", [], |row| {
                     row.get(0)
                 })?;
-            (request_logs, rollups, stream_logs)
+            let remote_rollup = conn.query_row(
+                "SELECT COUNT(*) FROM usage_daily_rollups
+                 WHERE date = '2026-03-02' AND provider_id = 'remote-provider'",
+                [],
+                |row| row.get(0),
+            )?;
+            let local_rollup = conn.query_row(
+                "SELECT COUNT(*) FROM usage_daily_rollups
+                 WHERE date = '2026-03-01' AND provider_id = 'local-provider'",
+                [],
+                |row| row.get(0),
+            )?;
+            (
+                request_logs,
+                rollups,
+                stream_logs,
+                remote_rollup,
+                local_rollup,
+            )
         };
         assert_eq!(request_logs, 1, "local request logs should be preserved");
-        assert_eq!(rollups, 1, "local rollups should be preserved");
         assert_eq!(
             stream_logs, 1,
             "local stream check logs should be preserved"
+        );
+        // Simple Plan A: remote rollup snapshot replaces local-only rollups on import.
+        assert_eq!(rollups, 1, "imported sync should keep remote rollup set");
+        assert_eq!(remote_rollup, 1, "remote usage_daily_rollups should import");
+        assert_eq!(
+            local_rollup, 0,
+            "local-only rollups are replaced by remote sync snapshot"
         );
 
         Ok(())
