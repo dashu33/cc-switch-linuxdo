@@ -1,0 +1,268 @@
+name: Personal macOS Release (unsigned)
+
+# Self-use unsigned/ad-hoc macOS build for personal tags.
+# Trigger: push tags matching v*-personal*  OR  workflow_dispatch
+# No Apple Developer certificate / notarization required.
+# Users must allow the app manually on first open (Gatekeeper).
+
+on:
+  push:
+    tags:
+      - 'v*-personal*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing git tag to attach assets to (e.g. v3.17.1-personal.1). Empty = use run id suffix only artifacts.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: personal-macos-${{ github.ref_name }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  build-macos:
+    name: Build macOS unsigned (universal)
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && (inputs.tag != '' && inputs.tag || github.ref) || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.12.3
+          run_install: false
+
+      - name: Get pnpm store directory
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare Tauri updater signing key
+        shell: bash
+        run: |
+          if [ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
+            echo "❌ TAURI_SIGNING_PRIVATE_KEY Secret 为空或不存在" >&2
+            exit 1
+          fi
+
+          RAW="${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"
+          KEY_PATH="$RUNNER_TEMP/tauri_signing.key"
+
+          if echo "$RAW" | head -n1 | grep -q '^untrusted comment:'; then
+            printf '%s\n' "$RAW" > "$KEY_PATH"
+          else
+            if DECODED=$(printf '%s' "$RAW" | (base64 --decode 2>/dev/null || base64 -D 2>/dev/null)) \
+               && echo "$DECODED" | head -n1 | grep -q '^untrusted comment:'; then
+              printf '%s\n' "$DECODED" > "$KEY_PATH"
+            else
+              if echo "$RAW" | grep -Eq '^[A-Za-z0-9+/=]+$'; then
+                ONE=$(printf '%s' "$RAW" | tr -d '\r\n')
+                printf '%s\n%s\n' "untrusted comment: tauri signing key" "$ONE" > "$KEY_PATH"
+              else
+                echo "❌ TAURI_SIGNING_PRIVATE_KEY 格式无法识别" >&2
+                exit 1
+              fi
+            fi
+          fi
+
+          KEY_B64=$(base64 < "$KEY_PATH" | tr -d '\r\n')
+          echo "TAURI_SIGNING_PRIVATE_KEY=$KEY_B64" >> "$GITHUB_ENV"
+          if [ -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+          fi
+          echo "✅ Tauri updater signing key prepared (Apple code-sign intentionally skipped)"
+
+      - name: Build Tauri App (macOS universal, unsigned)
+        shell: bash
+        env:
+          # Prevent Apple identity auto-discovery / notarization paths
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          APPLE_SIGNING_IDENTITY: ''
+          APPLE_ID: ''
+          APPLE_PASSWORD: ''
+          APPLE_TEAM_ID: ''
+          APPLE_API_KEY: ''
+          APPLE_API_ISSUER: ''
+          CI: 'true'
+        run: |
+          set -euo pipefail
+          echo "Building unsigned universal macOS app..."
+          # Prefer universal; if linker/tooling fails, fall back to arm64-only
+          if pnpm tauri build --target universal-apple-darwin --bundles app; then
+            echo "✅ universal-apple-darwin app bundle built"
+          else
+            echo "⚠️ universal build failed, falling back to aarch64-apple-darwin"
+            pnpm tauri build --target aarch64-apple-darwin --bundles app
+          fi
+
+      - name: Prepare unsigned macOS assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag }}" ]; then
+            VERSION="${{ inputs.tag }}"
+          elif [[ "${GITHUB_REF_NAME}" == v* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="run-${GITHUB_RUN_ID}"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Packaging version: $VERSION"
+
+          APP_PATH=""
+          for path in \
+            "src-tauri/target/universal-apple-darwin/release/bundle/macos" \
+            "src-tauri/target/aarch64-apple-darwin/release/bundle/macos" \
+            "src-tauri/target/x86_64-apple-darwin/release/bundle/macos" \
+            "src-tauri/target/release/bundle/macos"; do
+            if [ -d "$path" ]; then
+              cand=$(find "$path" -maxdepth 1 -name "*.app" -type d | head -1 || true)
+              if [ -n "$cand" ]; then
+                APP_PATH="$cand"
+                break
+              fi
+            fi
+          done
+
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ No .app found under target/*/release/bundle/macos" >&2
+            find src-tauri/target -maxdepth 5 -type d -name "*.app" 2>/dev/null || true
+            exit 1
+          fi
+          echo "Found app: $APP_PATH"
+
+          # Ad-hoc sign (no Developer ID) — helps some Gatekeeper paths vs completely unsigned
+          codesign --force --deep --sign - "$APP_PATH" || echo "⚠️ ad-hoc codesign failed (continuing)"
+          codesign -dv --verbose=2 "$APP_PATH" || true
+
+          # Primary distribute: zip of .app
+          ZIP_NAME="CC-Switch-${VERSION}-macOS-unsigned.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "release-assets/${ZIP_NAME}"
+          echo "✅ zip: $ZIP_NAME"
+
+          # Optional updater tarball if Tauri produced one
+          for path in \
+            "src-tauri/target/universal-apple-darwin/release/bundle/macos" \
+            "src-tauri/target/aarch64-apple-darwin/release/bundle/macos" \
+            "src-tauri/target/x86_64-apple-darwin/release/bundle/macos"; do
+            if [ -d "$path" ]; then
+              TAR_GZ=$(find "$path" -maxdepth 1 -name "*.tar.gz" -type f | head -1 || true)
+              if [ -n "$TAR_GZ" ]; then
+                NEW_TAR="CC-Switch-${VERSION}-macOS-unsigned.tar.gz"
+                cp "$TAR_GZ" "release-assets/${NEW_TAR}"
+                [ -f "$TAR_GZ.sig" ] && cp "$TAR_GZ.sig" "release-assets/${NEW_TAR}.sig" || true
+                echo "✅ updater tar: $NEW_TAR"
+                break
+              fi
+            fi
+          done
+
+          # Optional unsigned DMG via hdiutil (no Apple cert)
+          DMG_NAME="CC-Switch-${VERSION}-macOS-unsigned.dmg"
+          STAGE="$RUNNER_TEMP/dmg-stage"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+          ditto "$APP_PATH" "$STAGE/CC Switch.app"
+          hdiutil create \
+            -volname "CC Switch" \
+            -srcfolder "$STAGE" \
+            -ov \
+            -format UDZO \
+            "release-assets/${DMG_NAME}"
+          rm -rf "$STAGE"
+          echo "✅ dmg: $DMG_NAME"
+
+          # Install hint
+          cat > "release-assets/README-macOS-unsigned.txt" <<EOF
+          CC Switch ${VERSION} — macOS unsigned / ad-hoc personal build
+
+          安装说明（自用）：
+          1. 下载 CC-Switch-*-macOS-unsigned.zip 并解压得到 “CC Switch.app”
+             或打开 CC-Switch-*-macOS-unsigned.dmg 拖到“应用程序”
+          2. 首次打开若被拦截：
+             右键 App → 打开 → 仍要打开
+             或：系统设置 → 隐私与安全性 → 仍要打开
+          3. 命令行解除隔离（可选）：
+             xattr -dr com.apple.quarantine "/Applications/CC Switch.app"
+
+          注意：此包未使用 Apple Developer ID，也未公证，仅供自用。
+          EOF
+
+          ls -lah release-assets
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-assets-macOS-unsigned
+          path: release-assets/*
+          if-no-files-found: error
+
+  publish-macos:
+    name: Attach macOS assets to GitHub Release
+    runs-on: ubuntu-22.04
+    needs: build-macos
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.tag != '')
+    permissions:
+      contents: write
+    steps:
+      - name: Download macOS assets
+        uses: actions/download-artifact@v8
+        with:
+          name: release-assets-macOS-unsigned
+          path: release-assets
+
+      - name: Resolve release tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Ensure release exists and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -la release-assets
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --prerelease \
+              --title "CC Switch ${TAG} (personal)" \
+              --notes "Personal prerelease (Windows + unsigned macOS). See FEATURE/RELEASE-NOTES."
+          fi
+          gh release upload "$TAG" release-assets/* --clobber --repo "$GITHUB_REPOSITORY"
+          echo "✅ Uploaded unsigned macOS assets to release $TAG"

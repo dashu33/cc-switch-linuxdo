@@ -51,3 +51,21 @@ GitHub Release（prerelease）：
 - 本标签走 **Personal Windows Release** workflow（仅 Windows x64）
 - 完整多平台 `release.yml` 需要 Apple 签名等密钥，自用仓库暂不启用
 - 签名私钥仅存 GitHub Actions Secret，**未**提交进仓库
+
+## macOS 自用包（无 Apple Developer 签名）
+
+自 `v3.17.1-personal.2` 起，标签 `v*-personal*` 会额外触发：
+
+- Workflow: `.github/workflows/release-personal-macos.yml`
+- 产物：
+  - `CC-Switch-<tag>-macOS-unsigned.zip`（推荐）
+  - `CC-Switch-<tag>-macOS-unsigned.dmg`
+  - 可选 updater `.tar.gz` + `.sig`
+- 签名策略：**ad-hoc**（`codesign -s -`），**不做** Developer ID / 公证
+
+### 首次打开
+1. 解压 zip 或挂载 dmg
+2. 右键 App → 打开 → 仍要打开
+3. 或：`xattr -dr com.apple.quarantine "/Applications/CC Switch.app"`
+
+也可在 Actions 页面对 `Personal macOS Release (unsigned)` 使用 **Run workflow**，并把 assets 挂到已有 tag。
