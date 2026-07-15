@@ -81,3 +81,7 @@ cargo test provider_append_order_tests --lib
 ## 相关文档
 
 - [代码地图](./CODEMAP.md)
+
+## 关联更新
+
+子菜单筛选、左侧 rail 压缩与模型 LOGO 见 [../供应商行UI压缩与筛选/](../供应商行UI压缩与筛选/)。

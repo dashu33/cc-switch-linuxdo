@@ -223,4 +223,14 @@ describe("newapi_channel_conn import formats", () => {
       apiKey: "sk-67qDCQDZGkzgeFCuBivFPHmNL9IrCirrVZ4rrWkXzHr5zwXx",
     });
   });
+
+  it("strips Chinese noise glued inside sk keys", () => {
+    const text = `[https://newapi.opctoai.com/v1](https://newapi.opctoai.com/v1)
+KEY=sk-jf0w8ej7nj3qk2yt删除我fzsujejkuwegtqe`;
+    expect(parseNewApiClipboard(text)).toEqual({
+      baseUrl: "https://newapi.opctoai.com/v1",
+      apiKey: "sk-jf0w8ej7nj3qk2ytfzsujejkuwegtqe",
+    });
+  });
+
 });

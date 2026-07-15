@@ -101,10 +101,97 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
     [sortedProviders, appId, queryClient, t],
   );
 
+  const moveProviderByOffset = useCallback(
+    async (providerId: string, offset: number) => {
+      if (!offset) return;
+      const oldIndex = sortedProviders.findIndex(
+        (provider) => provider.id === providerId,
+      );
+      if (oldIndex === -1) return;
+      const newIndex = oldIndex + offset;
+      if (newIndex < 0 || newIndex >= sortedProviders.length) return;
+
+      const reordered = arrayMove(sortedProviders, oldIndex, newIndex);
+      const updates = reordered.map((provider, index) => ({
+        id: provider.id,
+        sortIndex: index,
+      }));
+
+      try {
+        await providersApi.updateSortOrder(updates, appId);
+        await queryClient.invalidateQueries({
+          queryKey: ["providers", appId],
+        });
+        await queryClient.invalidateQueries({
+          queryKey: ["failoverQueue", appId],
+        });
+        try {
+          await providersApi.updateTrayMenu();
+        } catch (trayError) {
+          console.error("Failed to update tray menu after sort", trayError);
+        }
+      } catch (error) {
+        console.error("Failed to move provider", error);
+        toast.error(
+          t("provider.sortUpdateFailed", {
+            defaultValue: "排序更新失败",
+          }),
+        );
+      }
+    },
+    [sortedProviders, appId, queryClient, t],
+  );
+
+  const pinProviderToTop = useCallback(
+    async (providerId: string) => {
+      const oldIndex = sortedProviders.findIndex(
+        (provider) => provider.id === providerId,
+      );
+      if (oldIndex <= 0) return;
+
+      const reordered = arrayMove(sortedProviders, oldIndex, 0);
+      const updates = reordered.map((provider, index) => ({
+        id: provider.id,
+        sortIndex: index,
+      }));
+
+      try {
+        await providersApi.updateSortOrder(updates, appId);
+        await queryClient.invalidateQueries({
+          queryKey: ["providers", appId],
+        });
+        await queryClient.invalidateQueries({
+          queryKey: ["failoverQueue", appId],
+        });
+        try {
+          await providersApi.updateTrayMenu();
+        } catch (trayError) {
+          console.error("Failed to update tray menu after pin", trayError);
+        }
+        toast.success(
+          t("provider.pinnedToTop", {
+            defaultValue: "已置顶",
+          }),
+          { closeButton: true },
+        );
+      } catch (error) {
+        console.error("Failed to pin provider", error);
+        toast.error(
+          t("provider.sortUpdateFailed", {
+            defaultValue: "排序更新失败",
+          }),
+        );
+      }
+    },
+    [sortedProviders, appId, queryClient, t],
+  );
+
   return {
     sortedProviders,
     sensors,
     handleDragEnd,
+    moveProviderByOffset,
+    pinProviderToTop,
   };
 }
 

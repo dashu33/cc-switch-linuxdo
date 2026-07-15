@@ -228,7 +228,28 @@
     "fetchModelsBatchDone": "検出完了：可用 {{success}} · なし {{empty}} · 失敗 {{failed}} · スキップ {{skipped}}",
     "fetchModelsBatchDoneHint": "カード枠は約60秒で解除され、右上の状態は次の手動取得まで残ります",
     "fetchModelsAllSkipped": "検出可能なプロバイダーがありません（{{skipped}} 件スキップ）",
-    "fetchModelsNoProviders": "検出できるプロバイダーがありません"
+    "fetchModelsNoProviders": "検出できるプロバイダーがありません",
+    "filter": "絞り込み",
+    "filterProviders": "プロバイダーを絞り込み",
+    "filterByProbeStatus": "取得ステータス",
+    "filterByModel": "モデル",
+    "filterModelPlaceholder": "例: gpt / claude / qwen",
+    "clearFilters": "絞り込みを解除",
+    "noFilterResults": "絞り込み条件に一致するプロバイダーがありません。",
+    "moveUp": "上へ",
+    "moveDown": "下へ",
+    "probedModelLogos": "取得したモデルブランド（クリックで切替）",
+    "filterStatus": {
+      "all": "すべて",
+      "success": "成功",
+      "failed": "失敗",
+      "empty": "空",
+      "skipped": "スキップ",
+      "unchecked": "未確認"
+    },
+    "pinToTop": "最上へ",
+    "pinnedToTop": "最上へ固定しました",
+    "switchToBrandModel": "{{model}} に切り替え"
   },
   "claudeCode": {
     "needsRouting": "ルーティングが必要",

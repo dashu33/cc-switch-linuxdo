@@ -21,6 +21,7 @@ import {
   ArrowDownAZ,
   CalendarArrowDown,
   CalendarArrowUp,
+  Filter,
   ListOrdered,
   Search,
   X,
@@ -56,6 +57,11 @@ import {
 import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { useProviderStats } from "@/lib/query/usage";
@@ -122,8 +128,19 @@ interface ProviderListProps {
   modelsProbeById?: ModelsProbeById;
   /** 最近一次完成的批量探测结果，用于持久状态图标 */
   modelsProbeHistoryById?: ModelsProbeById;
+  /** 行内手动获取完成后写回探测历史 */
+  onModelsProbeResult?: (
+    providerId: string,
+    entry: {
+      status: ModelsProbeStatus;
+      modelCount?: number;
+      modelIds?: string[];
+    },
+  ) => void;
   /** 与当前 Provider 列表相关的快捷操作，显示在排序子菜单右侧 */
   toolbarActions?: ReactNode;
+  /** 导入/新建成功后自动探测模型 */
+  onAutoProbeProviders?: (providerIds?: string[]) => void;
 }
 
 export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(function ProviderList({
@@ -153,16 +170,16 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
   modelsProbeProviderId = null,
   modelsProbeById = {},
   modelsProbeHistoryById = {},
+  onModelsProbeResult,
   toolbarActions,
+  onAutoProbeProviders,
 }, ref) {
   const { t, i18n } = useTranslation();
   const listRootRef = useRef<HTMLDivElement | null>(null);
   const searchTermRef = useRef("");
   const { checkProvider, isChecking } = useStreamCheck(appId);
-  const { sortedProviders, sensors, handleDragEnd } = useDragSort(
-    providers,
-    appId,
-  );
+  const { sortedProviders, sensors, handleDragEnd, moveProviderByOffset, pinProviderToTop } =
+    useDragSort(providers, appId);
 
   const { data: opencodeLiveIds } = useQuery({
     queryKey: ["opencodeLiveProviderIds"],
@@ -338,6 +355,10 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
 
   const [searchTerm, setSearchTerm] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [probeStatusFilter, setProbeStatusFilter] = useState<
+    "all" | "success" | "failed" | "empty" | "skipped" | "unchecked"
+  >("all");
+  const [modelFilter, setModelFilter] = useState("");
   const [sortMode, setSortMode] = useState<ProviderSortMode>(() =>
     readProviderSortMode(appId),
   );
@@ -385,15 +406,17 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
       }
       return providersApi.importDefault(appId);
     },
-    onSuccess: (imported) => {
+    onSuccess: async (imported) => {
       if (imported) {
-        queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+        await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
         if (appId === "claude-desktop") {
-          queryClient.invalidateQueries({
+          await queryClient.invalidateQueries({
             queryKey: ["claudeDesktopStatus"],
           });
         }
         toast.success(t("provider.importCurrentDescription"));
+        // 导入成功后刷新列表再全量探测（空参数 = 全部）
+        onAutoProbeProviders?.();
       } else {
         toast.info(t("provider.noProviders"));
       }
@@ -446,6 +469,16 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
     [appId],
   );
 
+  const handlePinProviderToTop = useCallback(
+    async (providerId: string) => {
+      if (sortMode !== "manual") {
+        selectSortMode("manual");
+      }
+      await pinProviderToTop(providerId);
+    },
+    [pinProviderToTop, selectSortMode, sortMode],
+  );
+
   const displayProviders = useMemo(() => {
     if (sortMode === "manual") return sortedProviders;
 
@@ -480,14 +513,46 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
 
   const filteredProviders = useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase();
-    if (!keyword) return displayProviders;
+    const modelKeyword = modelFilter.trim().toLowerCase();
+
     return displayProviders.filter((provider) => {
-      const fields = [provider.name, provider.notes, provider.websiteUrl];
-      return fields.some((field) =>
-        field?.toString().toLowerCase().includes(keyword),
-      );
+      if (keyword) {
+        const fields = [provider.name, provider.notes, provider.websiteUrl];
+        const matched = fields.some((field) =>
+          field?.toString().toLowerCase().includes(keyword),
+        );
+        if (!matched) return false;
+      }
+
+      if (probeStatusFilter !== "all") {
+        const status = modelsProbeHistoryById[provider.id]?.status;
+        if (probeStatusFilter === "unchecked") {
+          if (status) return false;
+        } else if (status !== probeStatusFilter) {
+          return false;
+        }
+      }
+
+      if (modelKeyword) {
+        const modelIds = modelsProbeHistoryById[provider.id]?.modelIds ?? [];
+        const hit = modelIds.some((id) =>
+          id.toLowerCase().includes(modelKeyword),
+        );
+        if (!hit) return false;
+      }
+
+      return true;
     });
-  }, [displayProviders, searchTerm]);
+  }, [
+    displayProviders,
+    modelFilter,
+    modelsProbeHistoryById,
+    probeStatusFilter,
+    searchTerm,
+  ]);
+
+  const hasActiveFilters =
+    probeStatusFilter !== "all" || modelFilter.trim().length > 0;
 
   /** 与卡片 isCurrent 一致的「正在使用」供应商 ID */
   const resolveInUseProviderId = useCallback((): string | null => {
@@ -841,6 +906,28 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
                 modelsProbeHistoryStatus={
                   modelsProbeHistoryById[provider.id]?.status
                 }
+                modelsProbeModelIds={
+                  modelsProbeHistoryById[provider.id]?.modelIds
+                }
+                onModelsProbeResult={
+                  onModelsProbeResult
+                    ? (entry) => onModelsProbeResult(provider.id, entry)
+                    : undefined
+                }
+                canReorder={sortMode === "manual"}
+                canMoveUp={
+                  sortMode === "manual" &&
+                  (providerSequenceById.get(provider.id) ?? 0) > 1
+                }
+                canMoveDown={
+                  sortMode === "manual" &&
+                  (providerSequenceById.get(provider.id) ?? 0) <
+                    displayProviders.length
+                }
+                onMoveUp={() => void moveProviderByOffset(provider.id, -1)}
+                onMoveDown={() => void moveProviderByOffset(provider.id, 1)}
+                canPinToTop
+                onPinToTop={() => void handlePinProviderToTop(provider.id)}
                 scrollHighlight={scrollHighlightId === provider.id}
               />
             );
@@ -893,17 +980,114 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
             {toolbarActions}
           </div>
         )}
-        <span
+        <div
           className={cn(
-            "shrink-0 text-xs tabular-nums text-muted-foreground",
+            "flex shrink-0 items-center gap-1",
             !toolbarActions && "ml-auto",
           )}
         >
-          {t("provider.providerCount", {
-            count: displayProviders.length,
-            defaultValue: "{{count}} 个供应商",
-          })}
-        </span>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className={cn(
+                  "h-7 gap-1 px-2 text-xs",
+                  hasActiveFilters && "bg-background text-foreground shadow-sm",
+                )}
+                aria-label={t("provider.filterProviders", {
+                  defaultValue: "筛选供应商",
+                })}
+                title={t("provider.filterProviders", {
+                  defaultValue: "筛选供应商",
+                })}
+              >
+                <Filter className="h-3.5 w-3.5" />
+                {t("provider.filter", { defaultValue: "筛选" })}
+                {hasActiveFilters && (
+                  <span className="rounded-full bg-primary/15 px-1.5 text-[10px] text-primary">
+                    •
+                  </span>
+                )}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-72 space-y-3 p-3" align="end">
+              <div className="space-y-1.5">
+                <div className="text-xs font-medium text-muted-foreground">
+                  {t("provider.filterByProbeStatus", {
+                    defaultValue: "拉取状态",
+                  })}
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {(
+                    [
+                      ["all", "全部"],
+                      ["success", "成功"],
+                      ["failed", "失败"],
+                      ["empty", "无模型"],
+                      ["skipped", "跳过"],
+                      ["unchecked", "未检测"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <Button
+                      key={value}
+                      type="button"
+                      size="sm"
+                      variant={probeStatusFilter === value ? "default" : "outline"}
+                      className="h-7 px-2 text-xs"
+                      onClick={() => setProbeStatusFilter(value)}
+                    >
+                      {t(`provider.filterStatus.${value}`, {
+                        defaultValue: label,
+                      })}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <div className="text-xs font-medium text-muted-foreground">
+                  {t("provider.filterByModel", {
+                    defaultValue: "模型",
+                  })}
+                </div>
+                <Input
+                  value={modelFilter}
+                  onChange={(event) => setModelFilter(event.target.value)}
+                  placeholder={t("provider.filterModelPlaceholder", {
+                    defaultValue: "如 gpt / claude / qwen",
+                  })}
+                  className="h-8 text-xs"
+                />
+              </div>
+              {hasActiveFilters && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-full text-xs"
+                  onClick={() => {
+                    setProbeStatusFilter("all");
+                    setModelFilter("");
+                  }}
+                >
+                  {t("provider.clearFilters", { defaultValue: "清除筛选" })}
+                </Button>
+              )}
+            </PopoverContent>
+          </Popover>
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+            {t("provider.providerCount", {
+              count: filteredProviders.length,
+              defaultValue: "{{count}} 个供应商",
+            })}
+            {filteredProviders.length !== displayProviders.length && (
+              <span className="text-muted-foreground/70">
+                {" "}/ {displayProviders.length}
+              </span>
+            )}
+          </span>
+        </div>
       </div>
       {claudeDesktopStatusMessages.length > 0 && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
@@ -1007,9 +1191,13 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
         />
       ) : filteredProviders.length === 0 ? (
         <div className="px-6 py-8 text-sm text-center border border-dashed rounded-lg border-border text-muted-foreground">
-          {t("provider.noSearchResults", {
-            defaultValue: "No providers match your search.",
-          })}
+          {hasActiveFilters && !searchTerm.trim()
+            ? t("provider.noFilterResults", {
+                defaultValue: "没有符合筛选条件的供应商。",
+              })
+            : t("provider.noSearchResults", {
+                defaultValue: "没有符合搜索条件的供应商。",
+              })}
         </div>
       ) : (
         renderProviderList()
@@ -1026,6 +1214,21 @@ interface SortableProviderCardProps {
   proxyRecentUsageStats?: ProviderStats;
   modelsProbeStatus?: ModelsProbeStatus;
   modelsProbeHistoryStatus?: ModelsProbeStatus;
+  modelsProbeModelIds?: string[];
+  onModelsProbeResult?: (
+    entry: {
+      status: ModelsProbeStatus;
+      modelCount?: number;
+      modelIds?: string[];
+    },
+  ) => void;
+  canReorder?: boolean;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  canPinToTop?: boolean;
+  onPinToTop?: () => void;
   scrollHighlight?: boolean;
   isCurrent: boolean;
   appId: AppId;
@@ -1096,6 +1299,15 @@ function SortableProviderCard({
   proxyRecentUsageStats,
   modelsProbeStatus = "idle",
   modelsProbeHistoryStatus,
+  modelsProbeModelIds,
+  onModelsProbeResult,
+  canReorder = false,
+  canMoveUp = false,
+  canMoveDown = false,
+  onMoveUp,
+  onMoveDown,
+  canPinToTop = false,
+  onPinToTop,
   scrollHighlight = false,
 }: SortableProviderCardProps) {
   const {
@@ -1164,6 +1376,15 @@ function SortableProviderCard({
         proxyRecentUsageStats={proxyRecentUsageStats}
         modelsProbeStatus={modelsProbeStatus}
         modelsProbeHistoryStatus={modelsProbeHistoryStatus}
+        modelsProbeModelIds={modelsProbeModelIds}
+        onModelsProbeResult={onModelsProbeResult}
+        canReorder={canReorder}
+        canMoveUp={canMoveUp}
+        canMoveDown={canMoveDown}
+        onMoveUp={onMoveUp}
+        onMoveDown={onMoveDown}
+        canPinToTop={canPinToTop}
+        onPinToTop={onPinToTop}
         scrollHighlight={scrollHighlight}
       />
     </div>

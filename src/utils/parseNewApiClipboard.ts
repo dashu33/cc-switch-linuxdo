@@ -73,6 +73,19 @@ function cleanToken(value: string): string {
     );
 }
 
+/** Remove CJK / fullwidth junk often pasted into API keys (e.g. sk-xxx删除我yyy). */
+function stripCjkNoise(value: string): string {
+  return value
+    .replace(/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/g, "")
+    .replace(/[\u3000-\u303f\uff00-\uffef]/g, "");
+}
+
+/** Sanitize API key candidates: trim quotes then drop CJK noise. */
+function sanitizeApiKeyCandidate(value: string): string {
+  return stripCjkNoise(cleanToken(value));
+}
+
+
 /** Strip trailing punctuation that often clings to free-text URL extraction. */
 function stripTrailingUrlJunk(value: string): string {
   let url = value.trim();
@@ -199,7 +212,7 @@ function tryDecodeBase64Candidate(value: string): string | null {
  * Avoid treating binary garbage from over-decoding as a key.
  */
 function decodeSecretLayers(value: string): string {
-  let current = cleanToken(value);
+  let current = sanitizeApiKeyCandidate(value);
   for (let i = 0; i < 2; i++) {
     if (looksLikeSkKey(current)) return current;
     const decoded = tryDecodeBase64Candidate(current);
@@ -301,8 +314,23 @@ function collectUrls(text: string): string[] {
 
 function collectSkKeys(text: string): string[] {
   const keys: string[] = [];
-  for (const match of text.matchAll(SK_KEY_RE)) {
-    if (match[1]) keys.push(cleanToken(match[1]));
+  const seen = new Set<string>();
+  const sources = [text, stripCjkNoise(text)];
+  for (const source of sources) {
+    for (const match of source.matchAll(SK_KEY_RE)) {
+      if (!match[1]) continue;
+      const key = sanitizeApiKeyCandidate(match[1]);
+      if (!looksLikeSkKey(key) || seen.has(key)) continue;
+      seen.add(key);
+      keys.push(key);
+    }
+  }
+  // Also: sk-... with CJK glued in the middle → strip then re-validate
+  for (const match of text.matchAll(/\bsk-[^\s"'`,;]+/gi)) {
+    const key = sanitizeApiKeyCandidate(match[0] ?? "");
+    if (!looksLikeSkKey(key) || seen.has(key)) continue;
+    seen.add(key);
+    keys.push(key);
   }
   return keys;
 }
@@ -538,7 +566,7 @@ function extractQueryKey(url: string): string | null {
 }
 
 function decodeApiKeyIfNeeded(apiKey: string): string {
-  const trimmed = cleanToken(apiKey);
+  const trimmed = sanitizeApiKeyCandidate(apiKey);
   if (looksLikeSkKey(trimmed)) return trimmed;
 
   const decoded = decodeSecretLayers(trimmed);

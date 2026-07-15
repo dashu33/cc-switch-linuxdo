@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import type { CodexApiFormat, Provider } from "@/types";
 import type { ModelsProbeStatus } from "@/hooks/useFetchCurrentProviderModels";
+import type { ModelBrandIcon } from "@/utils/modelBrandIcon";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -26,20 +27,34 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { ProviderIcon } from "@/components/ProviderIcon";
+import { cn } from "@/lib/utils";
 
 interface CodexProviderQuickAdjustProps {
   provider: Provider;
   onUpdate: (provider: Provider) => void | Promise<void>;
-  /** 顶部一键拉取批量探测结果，驱动本卡「获取」按钮着色 */
+  /** 瞬时探测结果（约 60s），驱动本卡「获取」按钮着色 */
   modelsProbeStatus?: ModelsProbeStatus;
+  /** 最近一次完成的探测历史（localStorage），用于按钮色持久化 */
+  modelsProbeHistoryStatus?: ModelsProbeStatus;
+  /** 本卡手动获取完成后写入持久 history */
+  onProbeResult?: (
+    entry: {
+      status: ModelsProbeStatus;
+      modelCount?: number;
+      modelIds?: string[];
+    },
+  ) => void;
+  /** 探测到的模型 brand LOGO，显示在当前模型选择框下方 */
+  modelBrandIcons?: ModelBrandIcon[];
+  /** 探测历史中的模型 id（用于下拉选项，无需本会话重新获取） */
+  modelOptions?: string[];
+  onSelectBrandModel?: (modelId: string) => void;
+  /**
+   * 渲染在「上游格式」控件正下方（与模型图标同一水平带）。
+   * 用于本地成功率摘要，避免图标把摘要整行顶到下方留下空白。
+   */
+  belowUpstream?: ReactNode;
 }
 
 function pickCodexApiKey(provider: Provider): string {
@@ -70,6 +85,12 @@ export function CodexProviderQuickAdjust({
   provider,
   onUpdate,
   modelsProbeStatus = "idle",
+  modelsProbeHistoryStatus,
+  onProbeResult,
+  modelBrandIcons = [],
+  modelOptions = [],
+  onSelectBrandModel,
+  belowUpstream,
 }: CodexProviderQuickAdjustProps) {
   const { t } = useTranslation();
   const [isSaving, setIsSaving] = useState(false);
@@ -86,26 +107,41 @@ export function CodexProviderQuickAdjust({
   }, [provider.id]);
 
 
-  // 同步顶部批量探测结果到本卡「获取」按钮色（本地手动获取优先）
+  // 同步探测结果到本卡「获取」按钮色：
+  // 1) 本地手动获取进行中优先
+  // 2) 瞬时批量/单条探测（约 60s）
+  // 3) 持久 history（localStorage），重启/切 app 后仍保持颜色
   useEffect(() => {
     if (isFetchingModels) return;
-    if (modelsProbeStatus === "idle" || modelsProbeStatus === "skipped") return;
+
+    const applyCompleted = (status: ModelsProbeStatus | undefined) => {
+      if (status === "success") {
+        setFetchStatus("success");
+        return true;
+      }
+      if (status === "empty") {
+        setFetchStatus("empty");
+        return true;
+      }
+      if (status === "failed") {
+        setFetchStatus("failed");
+        return true;
+      }
+      return false;
+    };
+
     if (modelsProbeStatus === "probing") {
       setFetchStatus("fetching");
       return;
     }
-    if (modelsProbeStatus === "success") {
-      setFetchStatus("success");
+    if (applyCompleted(modelsProbeStatus)) {
       return;
     }
-    if (modelsProbeStatus === "empty") {
-      setFetchStatus("empty");
+    // 瞬时态已 idle/skipped：回落到持久 history
+    if (applyCompleted(modelsProbeHistoryStatus)) {
       return;
     }
-    if (modelsProbeStatus === "failed") {
-      setFetchStatus("failed");
-    }
-  }, [isFetchingModels, modelsProbeStatus]);
+  }, [isFetchingModels, modelsProbeHistoryStatus, modelsProbeStatus]);
 
   const fetchButtonClassName = useMemo(() => {
     const base =
@@ -203,6 +239,7 @@ export function CodexProviderQuickAdjust({
   const handleFetchModels = useCallback(async () => {
     if (!baseUrl || !apiKey) {
       setFetchStatus("failed");
+      onProbeResult?.({ status: "failed" });
       showFetchModelsError(null, t, {
         hasApiKey: !!apiKey,
         hasBaseUrl: !!baseUrl,
@@ -220,11 +257,25 @@ export function CodexProviderQuickAdjust({
         provider.meta?.customUserAgent,
       );
       setFetchedModels(models);
+      const modelIds = models
+        .map((model) => model.id)
+        .filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+        .slice(0, 24);
       if (models.length === 0) {
         setFetchStatus("empty");
+        onProbeResult?.({
+          status: "empty",
+          modelCount: 0,
+          modelIds: [],
+        });
         toast.info(t("providerForm.fetchModelsEmpty"));
       } else {
         setFetchStatus("success");
+        onProbeResult?.({
+          status: "success",
+          modelCount: models.length,
+          modelIds,
+        });
         toast.success(
           t("providerForm.fetchModelsSuccess", { count: models.length }),
         );
@@ -233,76 +284,101 @@ export function CodexProviderQuickAdjust({
       console.warn("[CodexQuickAdjust] fetch models failed", err);
       setFetchedModels([]);
       setFetchStatus("failed");
+      onProbeResult?.({ status: "failed" });
       showFetchModelsError(err, t);
     } finally {
       setIsFetchingModels(false);
     }
-  }, [apiKey, baseUrl, provider.meta?.customUserAgent, provider.meta?.isFullUrl, t]);
+  }, [
+    apiKey,
+    baseUrl,
+    onProbeResult,
+    provider.meta?.customUserAgent,
+    provider.meta?.isFullUrl,
+    t,
+  ]);
 
-  const groupedModels = useMemo(() => {
-    const grouped: Record<string, FetchedModel[]> = {};
-    for (const model of fetchedModels) {
-      const vendor = model.ownedBy || "Other";
-      if (!grouped[vendor]) grouped[vendor] = [];
-      grouped[vendor].push(model);
+
+  const selectableModelIds = useMemo(() => {
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    const push = (raw?: string) => {
+      const id = raw?.trim();
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      ids.push(id);
+    };
+    for (const model of fetchedModels) push(model.id);
+    for (const id of modelOptions) push(id);
+    for (const brand of modelBrandIcons) {
+      push(brand.modelId);
+      for (const id of brand.modelIds ?? []) push(id);
     }
-    return Object.keys(grouped)
-      .sort()
-      .map((vendor) => ({ vendor, models: grouped[vendor] }));
-  }, [fetchedModels]);
+    push(currentModel);
+    return ids;
+  }, [currentModel, fetchedModels, modelBrandIcons, modelOptions]);
 
   return (
     <div
-      className="mt-2 flex flex-wrap items-center gap-2"
+      className="mt-1 flex w-full min-w-0 flex-col gap-1.5"
       onClick={(e) => e.stopPropagation()}
       onPointerDown={(e) => e.stopPropagation()}
     >
-      <div className="flex min-w-0 items-center gap-1.5">
-        <span className="shrink-0 text-[11px] text-muted-foreground">
-          {t("codexConfig.upstreamFormatLabel", { defaultValue: "上游格式" })}
-        </span>
-        <Select
-          value={currentFormat}
-          onValueChange={(value) => void handleFormatChange(value)}
-          disabled={isSaving}
-        >
-          <SelectTrigger className="h-7 w-[260px] min-w-[220px] max-w-[min(100%,280px)] shrink-0 text-xs [&>span]:truncate">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent className="z-[200] min-w-[var(--radix-select-trigger-width)]">
-            <SelectItem value="openai_chat">
-              {t("codexConfig.upstreamFormatChat", {
-                defaultValue: "Chat Completions（需开启路由）",
-              })}
-            </SelectItem>
-            <SelectItem value="openai_responses">
-              {t("codexConfig.upstreamFormatResponses", {
-                defaultValue: "Responses（原生）",
-              })}
-            </SelectItem>
-            <SelectItem value="anthropic">
-              {t("codexConfig.upstreamFormatAnthropic", {
-                defaultValue: "Anthropic Messages（需开启路由）",
-              })}
-            </SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
+      {/*
+        两列：左=上游格式(+成功率摘要)，右=模型控件+图标。
+        图标只撑高右列，成功率贴在上游格式下，消除中间空白。
+      */}
+      <div className="flex min-w-0 flex-wrap items-start gap-x-3 gap-y-1.5">
+        <div className="flex min-w-0 flex-col gap-1">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="shrink-0 text-[11px] text-muted-foreground">
+              {t("codexConfig.upstreamFormatLabel", { defaultValue: "上游格式" })}
+            </span>
+            <Select
+              value={currentFormat}
+              onValueChange={(value) => void handleFormatChange(value)}
+              disabled={isSaving}
+            >
+              <SelectTrigger className="h-7 w-[260px] min-w-[220px] max-w-[min(100%,280px)] shrink-0 text-xs [&>span]:truncate">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="z-[200] min-w-[var(--radix-select-trigger-width)]">
+                <SelectItem value="openai_chat">
+                  {t("codexConfig.upstreamFormatChat", {
+                    defaultValue: "Chat Completions（需开启路由）",
+                  })}
+                </SelectItem>
+                <SelectItem value="openai_responses">
+                  {t("codexConfig.upstreamFormatResponses", {
+                    defaultValue: "Responses（原生）",
+                  })}
+                </SelectItem>
+                <SelectItem value="anthropic">
+                  {t("codexConfig.upstreamFormatAnthropic", {
+                    defaultValue: "Anthropic Messages（需开启路由）",
+                  })}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {belowUpstream ? (
+            <div className="min-w-0 max-w-[min(100%,28rem)]">{belowUpstream}</div>
+          ) : null}
+        </div>
 
-      <div className="flex min-w-0 items-center gap-1.5">
-        <span className="shrink-0 text-[11px] text-muted-foreground">
-          {t("codexConfig.quickModelLabel", { defaultValue: "模型" })}
-        </span>
-        <div className="flex min-w-0 items-center gap-1">
-          {fetchedModels.length > 0 ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-7 max-w-[180px] justify-between gap-1 px-2 text-xs"
-                  disabled={isSaving}
+        <div className="flex min-w-0 items-start gap-1.5">
+          <span className="mt-1.5 shrink-0 text-[11px] leading-none text-muted-foreground">
+            {t("codexConfig.quickModelLabel", { defaultValue: "模型" })}
+          </span>
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <div className="flex min-w-0 flex-nowrap items-center gap-1.5">
+              <Select
+                value={currentModel || undefined}
+                onValueChange={(value) => void handleModelChange(value)}
+                disabled={isSaving || selectableModelIds.length === 0}
+              >
+                <SelectTrigger
+                  className="h-7 w-[180px] max-w-[200px] shrink-0 text-xs [&>span]:truncate"
                   title={
                     currentModel ||
                     t("codexConfig.quickSelectModel", {
@@ -310,78 +386,119 @@ export function CodexProviderQuickAdjust({
                     })
                   }
                 >
-                  <span className="truncate">
-                    {currentModel ||
-                      t("codexConfig.quickSelectModel", {
-                        defaultValue: "选择模型",
-                      })}
-                  </span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                align="start"
-                className="max-h-64 max-w-[320px] overflow-y-auto z-[200]"
-              >
-                {groupedModels.map(({ vendor, models }, index) => (
-                  <div key={vendor}>
-                    {index > 0 && <DropdownMenuSeparator />}
-                    <DropdownMenuLabel>{vendor}</DropdownMenuLabel>
-                    {models.map((model) => (
-                      <DropdownMenuItem
-                        key={model.id}
-                        onSelect={() => void handleModelChange(model.id)}
-                        className="max-w-[300px] truncate"
-                        title={model.id}
-                      >
-                        {model.id}
-                      </DropdownMenuItem>
-                    ))}
-                  </div>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : (
-            <span
-              className="max-w-[140px] truncate text-xs text-muted-foreground"
-              title={currentModel || undefined}
-            >
-              {currentModel ||
-                t("common.notSet", { defaultValue: "未设置" })}
-            </span>
-          )}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className={fetchButtonClassName}
-            onClick={() => void handleFetchModels()}
-            disabled={isFetchingModels || isSaving || fetchStatus === "fetching"}
-            title={
-              fetchStatus === "success"
-                ? t("providerForm.fetchModelsSuccess", {
-                    count: fetchedModels.length,
-                    defaultValue: "获取成功",
-                  })
-                : fetchStatus === "empty"
-                  ? t("providerForm.fetchModelsEmpty", {
-                      defaultValue: "未返回模型",
-                    })
-                  : fetchStatus === "failed"
-                    ? t("providerForm.fetchModelsFailed", {
-                        defaultValue: "获取失败",
+                  <SelectValue
+                    placeholder={t("codexConfig.quickSelectModel", {
+                      defaultValue: "选择模型",
+                    })}
+                  />
+                </SelectTrigger>
+                <SelectContent className="z-[200] max-h-64 min-w-[var(--radix-select-trigger-width)]">
+                  {selectableModelIds.map((id) => (
+                    <SelectItem key={id} value={id} title={id}>
+                      <span className="truncate">{id}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className={fetchButtonClassName}
+                onClick={() => void handleFetchModels()}
+                disabled={
+                  isFetchingModels || isSaving || fetchStatus === "fetching"
+                }
+                title={
+                  fetchStatus === "success"
+                    ? t("providerForm.fetchModelsSuccess", {
+                        count:
+                          fetchedModels.length || selectableModelIds.length,
+                        defaultValue: "获取成功",
                       })
-                    : t("providerForm.fetchModels")
-            }
-          >
-            {isFetchingModels || fetchStatus === "fetching" ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Download className="h-3.5 w-3.5" />
+                    : fetchStatus === "empty"
+                      ? t("providerForm.fetchModelsEmpty", {
+                          defaultValue: "未返回模型",
+                        })
+                      : fetchStatus === "failed"
+                        ? t("providerForm.fetchModelsFailed", {
+                            defaultValue: "获取失败",
+                          })
+                        : t("providerForm.fetchModels")
+                }
+              >
+                {isFetchingModels || fetchStatus === "fetching" ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Download className="h-3.5 w-3.5" />
+                )}
+                {fetchStatus === "idle"
+                  ? t("codexConfig.quickFetchModels", { defaultValue: "获取" })
+                  : fetchStatusLabel}
+              </Button>
+            </div>
+
+            {modelBrandIcons.length > 0 && (
+              <div
+                className="grid grid-cols-6 gap-1.5"
+                style={{
+                  width: "calc(6 * 2.25rem + 5 * 0.375rem)",
+                }}
+                title={t("provider.probedModelLogos", {
+                  defaultValue: "探测到的模型品牌",
+                })}
+              >
+                {modelBrandIcons.map((item) => {
+                  const clickable = Boolean(onSelectBrandModel && item.modelId);
+                  return (
+                    <button
+                      key={`${item.brand}-${item.modelId}`}
+                      type="button"
+                      disabled={!clickable}
+                      className={cn(
+                        "inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-md border border-border/60 bg-muted/30",
+                        clickable
+                          ? "cursor-pointer hover:bg-muted hover:ring-1 hover:ring-primary/40"
+                          : "cursor-default opacity-80",
+                      )}
+                      title={
+                        clickable
+                          ? t("provider.switchToBrandModel", {
+                              model: item.modelId,
+                              defaultValue: `切换到 ${item.modelId}`,
+                            })
+                          : item.modelId
+                      }
+                      aria-label={
+                        clickable
+                          ? t("provider.switchToBrandModel", {
+                              model: item.modelId,
+                              defaultValue: `切换到 ${item.modelId}`,
+                            })
+                          : item.modelId
+                      }
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.currentTarget.blur();
+                        if (!onSelectBrandModel || !item.modelId) return;
+                        onSelectBrandModel(item.modelId);
+                      }}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => e.preventDefault()}
+                    >
+                      <ProviderIcon
+                        icon={item.icon || undefined}
+                        name={item.modelId}
+                        color={item.iconColor}
+                        size={21}
+                        showFallback
+                      />
+                    </button>
+                  );
+                })}
+              </div>
             )}
-            {fetchStatus === "idle"
-              ? t("codexConfig.quickFetchModels", { defaultValue: "获取" })
-              : fetchStatusLabel}
-          </Button>
+          </div>
         </div>
       </div>
     </div>

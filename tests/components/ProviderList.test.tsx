@@ -345,7 +345,7 @@ describe("ProviderList Component", () => {
     expect(screen.queryByTestId("provider-card-alpha")).not.toBeInTheDocument();
     expect(screen.queryByTestId("provider-card-beta")).not.toBeInTheDocument();
     expect(
-      screen.getByText("No providers match your search."),
+      screen.getByText("没有符合搜索条件的供应商。"),
     ).toBeInTheDocument();
   });
 

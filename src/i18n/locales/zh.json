@@ -228,7 +228,28 @@
     "renameAria": "编辑供应商名称",
     "renameEmpty": "供应商名称不能为空",
     "renameSuccess": "名称已更新",
-    "renameFailed": "名称更新失败"
+    "renameFailed": "名称更新失败",
+    "filter": "筛选",
+    "filterProviders": "筛选供应商",
+    "filterByProbeStatus": "拉取状态",
+    "filterByModel": "模型",
+    "filterModelPlaceholder": "如 gpt / claude / qwen",
+    "clearFilters": "清除筛选",
+    "noFilterResults": "没有符合筛选条件的供应商。",
+    "moveUp": "上移",
+    "moveDown": "下移",
+    "probedModelLogos": "探测到的模型品牌（点击切换）",
+    "filterStatus": {
+      "all": "全部",
+      "success": "成功",
+      "failed": "失败",
+      "empty": "无模型",
+      "skipped": "跳过",
+      "unchecked": "未检测"
+    },
+    "pinToTop": "置顶",
+    "pinnedToTop": "已置顶",
+    "switchToBrandModel": "切换到 {{model}}"
   },
   "claudeCode": {
     "needsRouting": "需要路由",

@@ -52,7 +52,7 @@ useFetchCurrentProviderModels
   └─ probeHistoryById → ProviderCard.modelsProbeHistoryStatus（持久图标）
 ```
 
-持久化键：`cc-switch-models-probe-history:v1:<appId>`。仅保存 provider ID、终态、时间、模型数和跳过原因，不保存 URL、API Key 等凭证。新一轮探测进行中保留旧图标，整批结束后才替换。
+持久化键：`cc-switch-models-probe-history:v1:<appId>`。保存 provider ID、终态、时间、模型数、可选 `modelIds` 样本（最多 24）和跳过原因，不保存 URL、API Key 等凭证。旧 v1 无 `modelIds` 仍可解析。导入/新建可通过 `probeProviders` 静默单条合并历史。新一轮全量探测进行中保留旧图标，整批结束后才替换。行 UI 细节见 [../供应商行UI压缩与筛选/](../供应商行UI压缩与筛选/)。
 
 ## 搜索并定位
 
@@ -64,7 +64,9 @@ useFetchCurrentProviderModels
 ### 优先级
 
 - **卡片手动「获取」** 本地 `fetchStatus` 在请求中优先
-- 批量结果通过 `useEffect` 同步进 `fetchStatus`（idle/skipped 不覆盖）
+- 批量瞬时结果通过 `useEffect` 同步进 `fetchStatus`
+- 瞬时清空后回落 `modelsProbeHistoryStatus`，**获取按钮色与右上角图标一样持久化**（重启/切 app 仍保留）
+- idle/skipped 不覆盖已有终态
 
 ## 跳过规则
 

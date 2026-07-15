@@ -228,7 +228,28 @@
     "renameAria": "Edit provider name",
     "renameEmpty": "Name cannot be empty",
     "renameSuccess": "Name updated",
-    "renameFailed": "Failed to update name"
+    "renameFailed": "Failed to update name",
+    "filter": "Filter",
+    "filterProviders": "Filter providers",
+    "filterByProbeStatus": "Probe status",
+    "filterByModel": "Model",
+    "filterModelPlaceholder": "e.g. gpt / claude / qwen",
+    "clearFilters": "Clear filters",
+    "noFilterResults": "No providers match the current filters.",
+    "moveUp": "Move up",
+    "moveDown": "Move down",
+    "probedModelLogos": "Probed model brands (click to switch)",
+    "filterStatus": {
+      "all": "All",
+      "success": "Success",
+      "failed": "Failed",
+      "empty": "Empty",
+      "skipped": "Skipped",
+      "unchecked": "Unchecked"
+    },
+    "pinToTop": "Pin to top",
+    "pinnedToTop": "Pinned to top",
+    "switchToBrandModel": "Switch to {{model}}"
   },
   "claudeCode": {
     "needsRouting": "Needs Routing",

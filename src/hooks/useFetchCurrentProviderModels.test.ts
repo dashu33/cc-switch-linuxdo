@@ -43,4 +43,30 @@ describe("parseModelsProbeHistory", () => {
     expect(readModelsProbeHistory("claude", localStorage)).toEqual(claude);
     expect(readModelsProbeHistory("codex", localStorage)).toEqual(codex);
   });
+
+
+  it("keeps optional modelIds from storage while remaining backward compatible", () => {
+    expect(
+      parseModelsProbeHistory(
+        JSON.stringify({
+          legacy: { status: "success", at: 10, modelCount: 2 },
+          rich: {
+            status: "success",
+            at: 11,
+            modelCount: 3,
+            modelIds: ["gpt-4o", "claude-sonnet-4", 123, ""],
+          },
+        }),
+      ),
+    ).toEqual({
+      legacy: { status: "success", at: 10, modelCount: 2 },
+      rich: {
+        status: "success",
+        at: 11,
+        modelCount: 3,
+        modelIds: ["gpt-4o", "claude-sonnet-4"],
+      },
+    });
+  });
+
 });

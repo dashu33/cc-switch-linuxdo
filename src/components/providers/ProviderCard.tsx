@@ -10,6 +10,7 @@ import {
   CircleCheck,
   CircleX,
   CircleMinus,
+  Pin,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type {
@@ -39,6 +40,8 @@ import { ProviderProxyUsageSummary } from "@/components/providers/ProviderProxyU
 import { ProviderRecentCallsPanel } from "@/components/providers/ProviderRecentCallsPanel";
 import type { ProviderStats } from "@/types/usage";
 import type { ModelsProbeStatus } from "@/hooks/useFetchCurrentProviderModels";
+import { pickModelBrandIcons } from "@/utils/modelBrandIcon";
+import { applyProviderModel } from "@/utils/applyProviderModel";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
 import {
   extractCodexBaseUrl,
@@ -100,6 +103,24 @@ interface ProviderCardProps {
   modelsProbeStatus?: ModelsProbeStatus;
   /** 最近一次完成的批量探测结果：右侧悬浮状态图标 */
   modelsProbeHistoryStatus?: ModelsProbeStatus;
+  /** 最近一次探测到的模型 id 列表（用于行内 brand LOGO） */
+  modelsProbeModelIds?: string[];
+  /** 行内「获取」完成后写入持久探测历史 */
+  onModelsProbeResult?: (
+    entry: {
+      status: ModelsProbeStatus;
+      modelCount?: number;
+      modelIds?: string[];
+    },
+  ) => void;
+  /** 是否允许上下移动（自定义排序） */
+  canReorder?: boolean;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
+  onPinToTop?: () => void;
+  canPinToTop?: boolean;
   /** 快速定位时的短暂高亮 */
   scrollHighlight?: boolean;
 }
@@ -210,9 +231,22 @@ export function ProviderCard({
   proxyRecentUsageStats,
   modelsProbeStatus = "idle",
   modelsProbeHistoryStatus,
+  modelsProbeModelIds,
+  onModelsProbeResult,
+  canReorder = false,
+  onMoveUp,
+  onMoveDown,
+  canMoveUp = false,
+  canMoveDown = false,
+  onPinToTop,
+  canPinToTop = false,
   scrollHighlight = false,
 }: ProviderCardProps) {
   const { t } = useTranslation();
+  const modelLogoPack = useMemo(
+    () => pickModelBrandIcons(modelsProbeModelIds),
+    [modelsProbeModelIds],
+  );
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(provider.name);
   const [isSavingName, setIsSavingName] = useState(false);
@@ -508,47 +542,118 @@ export function ProviderCard({
       </div>
       <div className="relative flex flex-col gap-3 sm:flex-row sm:items-stretch sm:justify-between">
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          {sequenceNumber !== undefined && (
-            <span
-              className="w-6 shrink-0 text-center text-xs font-semibold tabular-nums text-muted-foreground"
-              aria-label={t("provider.sequenceNumber", {
-                number: sequenceNumber,
-                defaultValue: "序号 {{number}}",
-              })}
-            >
-              {sequenceNumber}
-            </span>
-          )}
-          <button
-            type="button"
-            className={cn(
-              "-ml-1.5 flex-shrink-0 cursor-grab active:cursor-grabbing p-1.5",
-              "text-muted-foreground/50 hover:text-muted-foreground transition-colors",
-              dragHandleProps?.isDragging && "cursor-grabbing",
-              isDragDisabled && "cursor-default opacity-30",
+          {/* 左侧窄 rail：序号 +（自定义排序时）移动控件；不侵占 Provider 图标区 */}
+          <div className="flex w-7 shrink-0 flex-col items-center justify-center gap-0.5 self-center">
+            {sequenceNumber !== undefined && (
+              <span
+                className="w-full text-center text-sm font-extrabold leading-none tabular-nums text-foreground"
+                aria-label={t("provider.sequenceNumber", {
+                  number: sequenceNumber,
+                  defaultValue: "序号 {{number}}",
+                })}
+              >
+                {sequenceNumber}
+              </span>
             )}
-            aria-label={t("provider.dragHandle")}
-            title={
-              isDragDisabled
-                ? t("provider.dragDisabledHint", {
-                    defaultValue: "切换到自定义排序后可拖拽",
-                  })
-                : t("provider.dragToReorder")
-            }
-            disabled={isDragDisabled}
-            {...(dragHandleProps?.attributes ?? {})}
-            {...(dragHandleProps?.listeners ?? {})}
-          >
-            <GripVertical className="h-4 w-4" />
-          </button>
+            {canReorder && (
+              <div
+                className={cn(
+                  "flex flex-col items-center gap-0",
+                  "opacity-0 transition-opacity duration-150",
+                  "group-hover:opacity-100 group-focus-within:opacity-100",
+                  dragHandleProps?.isDragging && "opacity-100",
+                )}
+              >
+                <button
+                  type="button"
+                  className={cn(
+                    "inline-flex h-3.5 w-5 items-center justify-center rounded-sm p-0",
+                    "text-muted-foreground/70 hover:bg-muted hover:text-foreground",
+                    !canMoveUp && "pointer-events-none opacity-30",
+                  )}
+                  disabled={!canMoveUp}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onMoveUp?.();
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  title={t("provider.moveUp", { defaultValue: "上移" })}
+                  aria-label={t("provider.moveUp", { defaultValue: "上移" })}
+                >
+                  <ChevronUp className="h-3 w-3" />
+                </button>
+                <button
+                  type="button"
+                  className={cn(
+                    "inline-flex h-3.5 w-5 cursor-grab items-center justify-center rounded-sm p-0",
+                    "text-muted-foreground/50 hover:bg-muted hover:text-muted-foreground active:cursor-grabbing",
+                    dragHandleProps?.isDragging && "cursor-grabbing",
+                    isDragDisabled && "cursor-default opacity-30",
+                  )}
+                  aria-label={t("provider.dragHandle")}
+                  title={
+                    isDragDisabled
+                      ? t("provider.dragDisabledHint", {
+                          defaultValue: "切换到自定义排序后可拖拽",
+                        })
+                      : t("provider.dragToReorder")
+                  }
+                  disabled={isDragDisabled}
+                  onClick={(e) => e.stopPropagation()}
+                  {...(dragHandleProps?.attributes ?? {})}
+                  {...(dragHandleProps?.listeners ?? {})}
+                >
+                  <GripVertical className="h-3 w-3" />
+                </button>
+                <button
+                  type="button"
+                  className={cn(
+                    "inline-flex h-3.5 w-5 items-center justify-center rounded-sm p-0",
+                    "text-muted-foreground/70 hover:bg-muted hover:text-foreground",
+                    !canMoveDown && "pointer-events-none opacity-30",
+                  )}
+                  disabled={!canMoveDown}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onMoveDown?.();
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  title={t("provider.moveDown", { defaultValue: "下移" })}
+                  aria-label={t("provider.moveDown", { defaultValue: "下移" })}
+                >
+                  <ChevronDown className="h-3 w-3" />
+                </button>
+              </div>
+            )}
+          </div>
 
-          <div className="h-8 w-8 flex-shrink-0 rounded-lg bg-muted flex items-center justify-center border border-border group-hover:scale-105 transition-transform duration-300">
-            <ProviderIcon
-              icon={provider.icon}
-              name={provider.name}
-              color={provider.iconColor}
-              size={20}
-            />
+          <div className="flex shrink-0 flex-col items-center gap-1">
+            <div className="h-8 w-8 flex-shrink-0 rounded-lg bg-muted flex items-center justify-center border border-border group-hover:scale-105 transition-transform duration-300">
+              <ProviderIcon
+                icon={provider.icon}
+                name={provider.name}
+                color={provider.iconColor}
+                size={20}
+              />
+            </div>
+            {canPinToTop && onPinToTop && (
+              <button
+                type="button"
+                className={cn(
+                  "inline-flex h-6 w-8 items-center justify-center rounded-md border border-border/60 bg-muted/40",
+                  "text-muted-foreground hover:bg-muted hover:text-foreground transition-colors",
+                )}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onPinToTop();
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+                title={t("provider.pinToTop", { defaultValue: "置顶" })}
+                aria-label={t("provider.pinToTop", { defaultValue: "置顶" })}
+              >
+                <Pin className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
 
           <div className="min-w-0 flex-1 space-y-1">
@@ -770,28 +875,114 @@ export function ProviderCard({
                   provider={provider}
                   onUpdate={onUpdate}
                   modelsProbeStatus={modelsProbeStatus}
+                  modelsProbeHistoryStatus={modelsProbeHistoryStatus}
+                  onProbeResult={onModelsProbeResult}
+                  modelBrandIcons={modelLogoPack.icons}
+                  modelOptions={modelsProbeModelIds}
+                  onSelectBrandModel={(modelId) => {
+                    const next = applyProviderModel(provider, appId, modelId);
+                    if (next) void Promise.resolve(onUpdate(next));
+                  }}
+                  belowUpstream={
+                    <ProviderProxyUsageSummary
+                      stats={proxyUsageStats}
+                      recentStats={proxyRecentUsageStats}
+                    />
+                  }
                 />
               )}
 
-            <ProviderProxyUsageSummary
-              stats={proxyUsageStats}
-              recentStats={proxyRecentUsageStats}
-            />
+            {/* 非 Codex 行：模型 LOGO 仍显示，每行 6 个自动换行 */}
+            {!(appId === "codex" && provider.category !== "official" && onUpdate) &&
+              modelLogoPack.icons.length > 0 && (
+              <div
+                className="grid w-full min-w-0 grid-cols-6 gap-1.5 pt-0.5"
+                style={{ maxWidth: "calc(6 * 2.25rem + 5 * 0.375rem)" }}
+                title={t("provider.probedModelLogos", {
+                  defaultValue: "探测到的模型品牌",
+                })}
+              >
+                {modelLogoPack.icons.map((item) => {
+                  const clickable = Boolean(onUpdate && item.modelId);
+                  return (
+                    <button
+                      key={`${item.brand}-${item.modelId}`}
+                      type="button"
+                      disabled={!clickable}
+                      className={cn(
+                        "inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-md border border-border/60 bg-muted/30",
+                        clickable
+                          ? "cursor-pointer hover:bg-muted hover:ring-1 hover:ring-primary/40"
+                          : "cursor-default opacity-80",
+                      )}
+                      title={
+                        clickable
+                          ? t("provider.switchToBrandModel", {
+                              model: item.modelId,
+                              defaultValue: `切换到 ${item.modelId}`,
+                            })
+                          : item.modelId
+                      }
+                      aria-label={
+                        clickable
+                          ? t("provider.switchToBrandModel", {
+                              model: item.modelId,
+                              defaultValue: `切换到 ${item.modelId}`,
+                            })
+                          : item.modelId
+                      }
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.currentTarget.blur();
+                        if (!onUpdate || !item.modelId) return;
+                        const next = applyProviderModel(
+                          provider,
+                          appId,
+                          item.modelId,
+                        );
+                        if (next) {
+                          void Promise.resolve(onUpdate(next));
+                        }
+                      }}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => e.preventDefault()}
+                    >
+                      <ProviderIcon
+                        icon={item.icon || undefined}
+                        name={item.modelId}
+                        color={item.iconColor}
+                        size={21}
+                        showFallback
+                      />
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* 非 Codex 或无 quick-adjust 时：成功率摘要仍在左侧信息列底部 */}
+            {!(
+              appId === "codex" &&
+              provider.category !== "official" &&
+              onUpdate
+            ) && (
+              <ProviderProxyUsageSummary
+                stats={proxyUsageStats}
+                recentStats={proxyRecentUsageStats}
+              />
+            )}
           </div>
         </div>
 
-        {/* 右侧：最近调用占位吃满行高；配额常显叠顶；操作按钮 hover 叠上（逻辑同前） */}
-        <div className="relative ml-auto flex w-[200px] sm:w-[280px] shrink-0 self-stretch min-h-[104px]">
-          <ProviderRecentCallsPanel
-            appId={appId}
-            providerName={provider.name}
-            isCurrent={isCurrent}
-            className="absolute inset-0"
-          />
-
-          {/* 配额/套餐：始终可见，叠在最近调用上方 */}
-          <div className="pointer-events-auto absolute right-1 top-1 z-10 max-w-[calc(100%-0.5rem)]">
-            <div className="flex max-w-full items-center gap-1 rounded-md bg-card/85 px-1 py-0.5 shadow-sm ring-1 ring-border/40 backdrop-blur-sm">
+        {/* 右侧：Usage 单行（无小气泡）+ 最近调用卡片；启用操作行垂直居中 */}
+        <div className="relative ml-auto flex w-[200px] sm:w-[280px] shrink-0 flex-col self-stretch">
+          {/* 用量查询：与最近调用同宽，单行，不套外层气泡 */}
+          {(isCopilot ||
+            isCodexOauth ||
+            (isOfficial && officialSubscriptionEnabled) ||
+            hasMultiplePlans ||
+            usageEnabled) && (
+            <div className="pointer-events-auto z-20 mb-1 flex h-7 w-full min-w-0 items-center justify-end gap-1 overflow-hidden">
               {isCopilot ? (
                 <CopilotQuotaFooter
                   meta={provider.meta}
@@ -856,11 +1047,21 @@ export function ProviderCard({
                 </button>
               )}
             </div>
-          </div>
+          )}
 
-          {/* 操作按钮：hover 显示，层级在最近调用之上 */}
-          <div className="pointer-events-none absolute inset-x-1 bottom-1 z-20 flex items-center justify-end opacity-0 transition-opacity duration-200 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
-            <div className="flex items-center gap-1.5 rounded-md bg-card/90 px-1 py-0.5 shadow-sm ring-1 ring-border/50 backdrop-blur-sm">
+          <div className="relative min-h-[104px] flex-1 self-stretch">
+            <ProviderRecentCallsPanel
+              appId={appId}
+              providerName={provider.name}
+              isCurrent={isCurrent}
+              className="absolute inset-0"
+            />
+          </div>
+        </div>
+
+        {/* 启用/操作按钮：整行垂直居中（不再贴底） */}
+        <div className="pointer-events-none absolute inset-y-0 right-2 z-20 flex items-center justify-end opacity-0 transition-opacity duration-200 group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 sm:right-3">
+          <div className="flex items-center gap-1.5 rounded-md bg-card/90 px-1 py-0.5 shadow-sm ring-1 ring-border/50 backdrop-blur-sm">
             <ProviderActions
               appId={appId}
               isCurrent={isCurrent}
@@ -874,11 +1075,6 @@ export function ProviderCard({
               onEdit={() => onEdit(provider)}
               onDuplicate={() => onDuplicate(provider)}
               onTest={
-                // 连通检测对第三方/自定义/Copilot/Codex-OAuth 供应商开放（这些正是旧的
-                // 真实请求探测会误报、而可达性探测能正确处理的对象）。官方供应商
-                // (category === "official") 一律隐藏：它们 base_url 故意留空、走客户端
-                // 默认/OAuth 端点，cc-switch 没有可靠的探测目标（尤其 Claude Desktop
-                // 官方是原生 1P 模式，根本不在请求路径上）。
                 onTest && provider.category !== "official"
                   ? () => onTest(provider)
                   : undefined
@@ -903,11 +1099,9 @@ export function ProviderCard({
               isAutoFailoverEnabled={isAutoFailoverEnabled}
               isInFailoverQueue={isInFailoverQueue}
               onToggleFailover={onToggleFailover}
-              // OpenClaw: default model
               isDefaultModel={isDefaultModel}
               onSetAsDefault={onSetAsDefault}
             />
-            </div>
           </div>
         </div>
       </div>

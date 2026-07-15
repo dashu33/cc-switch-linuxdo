@@ -96,15 +96,15 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   if (!usage || !usage.success) {
     if (inline) {
       return (
-        <div className="inline-flex items-center gap-2 text-xs rounded-lg border border-border-default bg-card px-3 py-2 shadow-sm">
-          <div className="flex items-center gap-1.5 text-red-500 dark:text-red-400">
+        <div className="inline-flex items-center gap-1.5 text-xs whitespace-nowrap">
+          <div className="flex items-center gap-1 text-red-500 dark:text-red-400">
             <AlertCircle size={12} />
             <span>{t("usage.queryFailed")}</span>
           </div>
           <button
             onClick={() => refetch()}
             disabled={loading}
-            className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0"
+            className="p-0.5 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0"
             title={t("usage.refreshUsage")}
           >
             <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
@@ -140,136 +140,118 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   // 无数据时不显示
   if (usageDataList.length === 0) return null;
 
-  // ── Token Plan：订阅风格内联渲染（百分比徽章 + 倒计时） ──
+  // ── Token Plan：单行内联（徽章 + 时间 + 刷新） ──
   if (isTokenPlan && inline) {
     return (
-      <div className="flex flex-col items-end gap-1 text-xs whitespace-nowrap flex-shrink-0">
-        {/* 第一行：查询时间 + 刷新 */}
-        <div className="flex items-center gap-2 justify-end">
-          <span className="text-[10px] text-muted-foreground/70 flex items-center gap-1">
-            <Clock size={10} />
-            {lastQueriedAt
-              ? formatRelativeTime(lastQueriedAt, now, t)
-              : t("usage.never", { defaultValue: "从未更新" })}
-          </span>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              refetch();
-            }}
-            disabled={loading}
-            className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0 text-muted-foreground"
-            title={t("usage.refreshUsage")}
-          >
-            <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-          </button>
-        </div>
-        {/* 第二行：tier 徽章（复用官方订阅的 TierBadge） */}
-        <div className="flex items-center gap-2">
-          {(() => {
-            const tiers = usageDataList.map((d) => toQuotaTier(d));
-            const planLabel = tiers[0]?.planLabel;
-            return (
-              <>
-                {planLabel && (
-                  <span className="font-semibold text-muted-foreground">
-                    💰 {planLabel}
-                  </span>
-                )}
-                {tiers.map((tier, index) => (
-                  <TierBadge key={index} tier={tier} t={t} />
-                ))}
-              </>
-            );
-          })()}
-        </div>
+      <div className="flex min-w-0 flex-nowrap items-center justify-end gap-1.5 text-xs whitespace-nowrap flex-shrink-0">
+        {(() => {
+          const tiers = usageDataList.map((d) => toQuotaTier(d));
+          const planLabel = tiers[0]?.planLabel;
+          return (
+            <>
+              {planLabel && (
+                <span className="font-semibold text-muted-foreground">
+                  💰 {planLabel}
+                </span>
+              )}
+              {tiers.map((tier, index) => (
+                <TierBadge key={index} tier={tier} t={t} />
+              ))}
+            </>
+          );
+        })()}
+        <span className="text-[10px] text-muted-foreground/70 flex items-center gap-0.5">
+          <Clock size={10} />
+          {lastQueriedAt
+            ? formatRelativeTime(lastQueriedAt, now, t)
+            : t("usage.never", { defaultValue: "从未更新" })}
+        </span>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            refetch();
+          }}
+          disabled={loading}
+          className="p-0.5 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0 text-muted-foreground"
+          title={t("usage.refreshUsage")}
+        >
+          <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+        </button>
       </div>
     );
   }
 
-  // ── 通用用量：内联模式（原有逻辑） ──
+  // ── 通用用量：单行内联（已用/剩余 + 时间 + 刷新） ──
   if (inline) {
     const firstUsage = usageDataList[0];
     const isExpired = firstUsage.isValid === false;
 
     return (
-      <div className="flex flex-col items-end gap-1 text-xs whitespace-nowrap flex-shrink-0">
-        {/* 第一行：更新时间和刷新按钮 */}
-        <div className="flex items-center gap-2 justify-end">
-          {/* 上次查询时间 */}
-          <span className="text-[10px] text-muted-foreground/70 flex items-center gap-1">
-            <Clock size={10} />
-            {lastQueriedAt
-              ? formatRelativeTime(lastQueriedAt, now, t)
-              : t("usage.never", { defaultValue: "从未更新" })}
-          </span>
-
-          {/* 刷新按钮 */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              refetch();
-            }}
-            disabled={loading}
-            className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0 text-muted-foreground"
-            title={t("usage.refreshUsage")}
-          >
-            <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-          </button>
-        </div>
-
-        {/* 第二行：用量和剩余 */}
-        <div className="flex items-center gap-2">
-          {/* 已用 */}
-          {firstUsage.used !== undefined && (
-            <div className="flex items-center gap-0.5">
-              <span className="text-gray-500 dark:text-gray-400">
-                {t("usage.used")}
-              </span>
-              <span className="tabular-nums text-gray-600 dark:text-gray-400 font-medium">
-                {firstUsage.used.toFixed(2)}
-              </span>
-            </div>
-          )}
-
-          {/* 剩余 */}
-          {firstUsage.remaining !== undefined && (
-            <div className="flex items-center gap-0.5">
-              <span className="text-gray-500 dark:text-gray-400">
-                {t("usage.remaining")}
-              </span>
-              <span
-                className={`font-semibold tabular-nums ${
-                  isExpired
-                    ? "text-red-500 dark:text-red-400"
-                    : firstUsage.remaining <
-                        (firstUsage.total || firstUsage.remaining) * 0.1
-                      ? "text-orange-500 dark:text-orange-400"
-                      : "text-green-600 dark:text-green-400"
-                }`}
-              >
-                {firstUsage.remaining.toFixed(2)}
-              </span>
-            </div>
-          )}
-
-          {/* 单位 */}
-          {firstUsage.unit && (
+      <div className="flex min-w-0 flex-nowrap items-center justify-end gap-1.5 text-xs whitespace-nowrap flex-shrink-0">
+        {firstUsage.used !== undefined && (
+          <div className="flex items-center gap-0.5">
             <span className="text-gray-500 dark:text-gray-400">
-              {firstUsage.unit}
+              {t("usage.used")}
             </span>
-          )}
+            <span className="tabular-nums text-gray-600 dark:text-gray-400 font-medium">
+              {firstUsage.used.toFixed(2)}
+            </span>
+          </div>
+        )}
 
-          {/* 扩展字段 extra */}
-          {firstUsage.extra && (
-            <span
-              className="text-gray-500 dark:text-gray-400 truncate max-w-[150px]"
-              title={firstUsage.extra}
-            >
-              {firstUsage.extra}
+        {firstUsage.remaining !== undefined && (
+          <div className="flex items-center gap-0.5">
+            <span className="text-gray-500 dark:text-gray-400">
+              {t("usage.remaining")}
             </span>
-          )}
-        </div>
+            <span
+              className={`font-semibold tabular-nums ${
+                isExpired
+                  ? "text-red-500 dark:text-red-400"
+                  : firstUsage.remaining <
+                      (firstUsage.total || firstUsage.remaining) * 0.1
+                    ? "text-orange-500 dark:text-orange-400"
+                    : "text-green-600 dark:text-green-400"
+              }`}
+            >
+              {firstUsage.remaining.toFixed(2)}
+            </span>
+          </div>
+        )}
+
+        {firstUsage.unit && (
+          <span className="text-gray-500 dark:text-gray-400">
+            {firstUsage.unit}
+          </span>
+        )}
+
+        {firstUsage.extra && (
+          <span
+            className="text-gray-500 dark:text-gray-400 truncate max-w-[120px]"
+            title={firstUsage.extra}
+          >
+            {firstUsage.extra}
+          </span>
+        )}
+
+        <span className="text-[10px] text-muted-foreground/70 flex items-center gap-0.5">
+          <Clock size={10} />
+          {lastQueriedAt
+            ? formatRelativeTime(lastQueriedAt, now, t)
+            : t("usage.never", { defaultValue: "从未更新" })}
+        </span>
+
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            refetch();
+          }}
+          disabled={loading}
+          className="p-0.5 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0 text-muted-foreground"
+          title={t("usage.refreshUsage")}
+        >
+          <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+        </button>
       </div>
     );
   }

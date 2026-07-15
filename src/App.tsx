@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
@@ -309,10 +309,28 @@ function App() {
   const {
     isFetching: isFetchingCurrentModels,
     fetchCurrentProviderModels,
+    probeProviders,
+    recordProviderProbeResult,
     probeResult: modelsProbeResult,
     probeById: modelsProbeById,
     probeHistoryById: modelsProbeHistoryById,
   } = useFetchCurrentProviderModels(activeApp, providers, currentProviderId);
+
+  const scheduleAutoProbeProviders = useCallback(
+    (providerIds?: string[]) => {
+      // Wait a tick so providers query can settle after create/import.
+      window.setTimeout(() => {
+        const ids = Array.from(new Set((providerIds ?? []).filter(Boolean)));
+        if (ids.length === 0) {
+          // 导入当前配置等场景：列表刷新后对全部可探测项批量探测
+          void fetchCurrentProviderModels();
+          return;
+        }
+        void probeProviders(ids, { quiet: true });
+      }, 400);
+    },
+    [fetchCurrentProviderModels, probeProviders],
+  );
 
   const handleScrollToCurrentProvider = () => {
     // list 可能尚未挂载（loading / 切应用）时多拍重试
@@ -371,6 +389,16 @@ function App() {
     activeApp,
     isProxyRunning,
     isProxyRunning && isCurrentAppTakeoverActive,
+  );
+
+  const handleAddProviderWithProbe = useCallback(
+    async (provider: Parameters<typeof addProvider>[0]) => {
+      const created = await addProvider(provider);
+      if (created?.id) {
+        scheduleAutoProbeProviders([created.id]);
+      }
+    },
+    [addProvider, scheduleAutoProbeProviders],
   );
 
   const disableOmoMutation = useDisableCurrentOmo();
@@ -859,7 +887,10 @@ function App() {
       }
     }
 
-    await addProvider(duplicatedProvider);
+    const createdDup = await addProvider(duplicatedProvider);
+    if (createdDup?.id) {
+      scheduleAutoProbeProviders([createdDup.id]);
+    }
   };
 
   const handleOpenTerminal = async (provider: Provider) => {
@@ -966,6 +997,7 @@ function App() {
       queryKey: ["providers"],
       type: "all",
     });
+    scheduleAutoProbeProviders([provider.id]);
     return true;
   };
 
@@ -1398,6 +1430,8 @@ function App() {
                       modelsProbeProviderId={modelsProbeResult.providerId}
                       modelsProbeById={modelsProbeById}
                       modelsProbeHistoryById={modelsProbeHistoryById}
+                      onModelsProbeResult={recordProviderProbeResult}
+                      onAutoProbeProviders={scheduleAutoProbeProviders}
                       toolbarActions={providerToolbarActions}
                       onSwitch={switchProvider}
                       onEdit={(provider) => {
@@ -2069,7 +2103,7 @@ function App() {
         open={isAddOpen}
         onOpenChange={setIsAddOpen}
         appId={activeApp}
-        onSubmit={addProvider}
+        onSubmit={handleAddProviderWithProbe}
       />
 
       <EditProviderDialog

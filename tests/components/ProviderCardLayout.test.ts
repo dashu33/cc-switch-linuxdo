@@ -12,8 +12,19 @@ const PROVIDER_CARD_TSX = path.resolve(
   "ProviderCard.tsx",
 );
 
+const CODEX_QUICK_ADJUST_TSX = path.resolve(
+  __dirname,
+  "..",
+  "..",
+  "src",
+  "components",
+  "providers",
+  "CodexProviderQuickAdjust.tsx",
+);
+
 describe("ProviderCard layout", () => {
   const source = fs.readFileSync(PROVIDER_CARD_TSX, "utf8");
+  const quickAdjust = fs.readFileSync(CODEX_QUICK_ADJUST_TSX, "utf8");
 
   it("lets website links use available card width before truncating", () => {
     expect(source).not.toContain("max-w-[280px]");
@@ -22,5 +33,30 @@ describe("ProviderCard layout", () => {
     expect(source).toContain(
       "inline-flex max-w-full items-center overflow-hidden text-left text-sm",
     );
+  });
+
+  it("compresses left rail for sequence and move controls", () => {
+    expect(source).toContain("flex w-7 shrink-0 flex-col items-center");
+    expect(source).toContain("text-sm font-extrabold leading-none tabular-nums");
+    expect(source).toContain("canReorder");
+    expect(source).toContain("pickModelBrandIcons");
+    expect(source).toContain("pinToTop");
+    expect(source).toContain("ProviderProxyUsageSummary");
+    expect(source).toContain("UsageFooter");
+    expect(source).toContain("inset-y-0");
+    expect(source).toContain("items-center justify-end");
+  });
+
+  it("slots local usage summary under upstream format beside model logos", () => {
+    expect(source).toContain("belowUpstream={");
+    expect(quickAdjust).toContain("belowUpstream");
+    expect(quickAdjust).toContain("图标只撑高右列");
+    // summary is passed into quick-adjust for codex rows
+    const codexIdx = source.indexOf("<CodexProviderQuickAdjust");
+    const nestedSummaryIdx = source.indexOf(
+      "belowUpstream={",
+      codexIdx,
+    );
+    expect(nestedSummaryIdx).toBeGreaterThan(codexIdx);
   });
 });

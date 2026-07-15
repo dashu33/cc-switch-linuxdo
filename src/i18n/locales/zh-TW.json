@@ -228,7 +228,28 @@
     "fetchModelsBatchDone": "探測完成：可用 {{success}} · 無模型 {{empty}} · 失敗 {{failed}} · 跳過 {{skipped}}",
     "fetchModelsBatchDoneHint": "卡片邊框約 60 秒後復位；右上角狀態保留至下次手動拉取",
     "fetchModelsAllSkipped": "沒有可探測的供應商（已跳過 {{skipped}} 個）",
-    "fetchModelsNoProviders": "目前沒有可探測的供應商"
+    "fetchModelsNoProviders": "目前沒有可探測的供應商",
+    "filter": "篩選",
+    "filterProviders": "篩選供應商",
+    "filterByProbeStatus": "拉取狀態",
+    "filterByModel": "模型",
+    "filterModelPlaceholder": "如 gpt / claude / qwen",
+    "clearFilters": "清除篩選",
+    "noFilterResults": "沒有符合篩選條件的供應商。",
+    "moveUp": "上移",
+    "moveDown": "下移",
+    "probedModelLogos": "探測到的模型品牌（點擊切換）",
+    "filterStatus": {
+      "all": "全部",
+      "success": "成功",
+      "failed": "失敗",
+      "empty": "無模型",
+      "skipped": "跳過",
+      "unchecked": "未檢測"
+    },
+    "pinToTop": "置頂",
+    "pinnedToTop": "已置頂",
+    "switchToBrandModel": "切換到 {{model}}"
   },
   "claudeCode": {
     "needsRouting": "需要路由",
