@@ -1,3 +1,30 @@
+# CC Switch v3.17.1-personal.3 更新说明（自用分支）
+
+分支：`codex/personal-provider-ux`  
+版本：`3.17.1`  
+标签：`v3.17.1-personal.3`
+
+## 本版新增
+
+1. **顶部 S3 快捷上传/下载**
+   - 供应商页工具栏，「一键拉取模型」左侧
+   - 两个纯图标按钮（UploadCloud / DownloadCloud），不显示长文案
+   - 复用设置页 S3 兼容存储上传/下载与确认流程
+   - 文档：`FEATURE/s3-toolbar-quick-sync/`
+
+## 构建与发布
+
+- Windows：`release-personal-windows.yml`（MSI / Portable）
+- macOS：**无签名 / ad-hoc** `release-personal-macos.yml`
+  - 产物：`CC-Switch-v3.17.1-personal.3-macOS-unsigned.zip` 等
+  - 首次打开：右键打开，或 `xattr -dr com.apple.quarantine`
+
+## 历史说明
+
+以下为 `personal.1` / `personal.2` 累计能力与既有发布说明。
+
+---
+
 # CC Switch v3.17.1-personal.1 更新说明（自用分支）
 
 分支：`codex/personal-provider-ux`  

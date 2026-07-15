@@ -83,6 +83,7 @@ import {
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { S3QuickSyncButtons } from "@/components/sync/S3QuickSyncButtons";
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import { UpdateBadge } from "@/components/UpdateBadge";
 import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
@@ -1685,7 +1686,8 @@ function App() {
                 )}
                 {currentView === "providers" && (
                   <>
-                                        <Button
+                    <S3QuickSyncButtons />
+                    <Button
                       onClick={() => void fetchCurrentProviderModels()}
                       size={
                         modelsProbeResult.status !== "idle" ||
