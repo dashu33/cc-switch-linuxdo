@@ -53,8 +53,35 @@ const MARKDOWN_LINK_RE =
 // Plain non-sk keys: long token with letters, not a URL / sk- / pure base64 blob.
 const PLAIN_KEY_RE = /\b([A-Za-z][A-Za-z0-9._-]{15,127})\b/g;
 
+/** Normalize smart quotes / fullwidth JSON punctuation so Chinese-copied JSON parses. */
+function normalizeJsonText(text: string): string {
+  return text
+    .replace(/[\u201c\u201d\u201e\u201f\u2033\u2036]/g, '"')
+    .replace(/[\u2018\u2019\u201a\u201b\u2032\u2035]/g, "'")
+    .replace(/\uFF5B/g, "{")
+    .replace(/\uFF5D/g, "}")
+    .replace(/\uFF1A/g, ":")
+    .replace(/\uFF0C/g, ",");
+}
+
 function cleanToken(value: string): string {
-  return value.trim().replace(/^["'`]+|["'`,;]+$/g, "");
+  return value
+    .trim()
+    .replace(
+      /^["'`\u201c\u201d\u2018\u2019]+|["'`\u201c\u201d\u2018\u2019,;]+$/g,
+      "",
+    );
+}
+
+/** Strip trailing punctuation that often clings to free-text URL extraction. */
+function stripTrailingUrlJunk(value: string): string {
+  let url = value.trim();
+  let prev = "";
+  while (url !== prev) {
+    prev = url;
+    url = url.replace(/[),.;:}\]"'`\u201c\u201d\u2018\u2019]+$/g, "");
+  }
+  return url;
 }
 
 function stripMarkdownWrapper(value: string): string {
@@ -65,7 +92,16 @@ function stripMarkdownWrapper(value: string): string {
   // bare [https://...] without link target
   const bare = trimmed.match(/^\[(https?:\/\/[^\]]+)\]$/i);
   if (bare?.[1]) return cleanToken(bare[1]);
-  return trimmed;
+  // Free-text regex may swallow markdown as one token:
+  // https://host](https://host/)"}
+  const brokenMd = trimmed.match(
+    /https?:\/\/[^\s"'`<>\]]+\]\((https?:\/\/[^)\s]+)\)/i,
+  );
+  if (brokenMd?.[1]) return cleanToken(brokenMd[1]);
+  // Any embedded markdown link target
+  const embedded = trimmed.match(/\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/i);
+  if (embedded?.[2]) return cleanToken(embedded[2]);
+  return stripTrailingUrlJunk(trimmed);
 }
 
 function looksLikeUrl(value: string): boolean {
@@ -202,7 +238,8 @@ function ensureHttps(url: string): string {
 
 function normalizeBaseUrl(raw: string): string {
   let url = ensureHttps(raw);
-  url = url.replace(/[),.;]+$/g, "");
+  // Strip common trailing punctuation / smart quotes / braces from free-text extraction
+  url = stripTrailingUrlJunk(url);
   try {
     const parsed = new URL(url);
     for (const key of [
@@ -242,7 +279,7 @@ function collectUrls(text: string): string[] {
   const seen = new Set<string>();
 
   for (const match of text.matchAll(SCHEME_URL_RE)) {
-    const value = cleanToken(match[0]).replace(/[),.;]+$/g, "");
+    const value = stripMarkdownWrapper(match[0]);
     if (looksLikeUrl(value) && !seen.has(value)) {
       seen.add(value);
       urls.push(value);
@@ -250,7 +287,7 @@ function collectUrls(text: string): string[] {
   }
 
   for (const match of text.matchAll(BARE_HOST_RE)) {
-    const value = cleanToken(match[0]).replace(/[),.;]+$/g, "");
+    const value = stripTrailingUrlJunk(cleanToken(match[0]));
     if (!looksLikeUrl(value)) continue;
     if (looksLikeBase64Blob(value) || looksLikeSkKey(value)) continue;
     if (!seen.has(value) && !urls.some((u) => u.includes(value))) {
@@ -440,23 +477,40 @@ function extractFromRecord(
 
 function tryParseJson(text: string): Partial<ParsedNewApiCredentials> | null {
   const trimmed = text.trim();
-  if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) return null;
-  try {
-    const parsed = JSON.parse(trimmed) as unknown;
-    if (Array.isArray(parsed)) {
-      for (const item of parsed) {
-        if (item && typeof item === "object") {
-          const extracted = extractFromRecord(item as Record<string, unknown>);
-          if (extracted.baseUrl || extracted.apiKey) return extracted;
-        }
-      }
-      return null;
-    }
-    if (parsed && typeof parsed === "object") {
-      return extractFromRecord(parsed as Record<string, unknown>);
-    }
-  } catch {
+  // Only attempt when it looks like JSON (including smart-quoted Chinese copies)
+  const normalized = normalizeJsonText(trimmed);
+  if (
+    !(
+      trimmed.startsWith("{") ||
+      trimmed.startsWith("[") ||
+      normalized.startsWith("{") ||
+      normalized.startsWith("[")
+    )
+  ) {
     return null;
+  }
+
+  const candidates = [trimmed];
+  if (normalized !== trimmed) candidates.push(normalized);
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (item && typeof item === "object") {
+            const extracted = extractFromRecord(item as Record<string, unknown>);
+            if (extracted.baseUrl || extracted.apiKey) return extracted;
+          }
+        }
+        continue;
+      }
+      if (parsed && typeof parsed === "object") {
+        return extractFromRecord(parsed as Record<string, unknown>);
+      }
+    } catch {
+      // try next candidate
+    }
   }
   return null;
 }

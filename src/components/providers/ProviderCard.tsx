@@ -1,5 +1,16 @@
 import { useMemo, useState, useEffect } from "react";
-import { GripVertical, ChevronDown, ChevronUp, Pencil, Check, X, Loader2 } from "lucide-react";
+import {
+  GripVertical,
+  ChevronDown,
+  ChevronUp,
+  Pencil,
+  Check,
+  X,
+  Loader2,
+  CircleCheck,
+  CircleX,
+  CircleMinus,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type {
   DraggableAttributes,
@@ -48,6 +59,7 @@ interface DragHandleProps {
 
 interface ProviderCardProps {
   provider: Provider;
+  sequenceNumber?: number;
   isCurrent: boolean;
   appId: AppId;
   isInConfig?: boolean; // OpenCode: 是否已添加到 opencode.json
@@ -71,6 +83,7 @@ interface ProviderCardProps {
   isProxyRunning: boolean;
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管，切换为热切换）
   dragHandleProps?: DragHandleProps;
+  isDragDisabled?: boolean;
   isAutoFailoverEnabled?: boolean; // 是否开启自动故障转移
   failoverPriority?: number; // 故障转移优先级（1 = P1, 2 = P2, ...）
   isInFailoverQueue?: boolean; // 是否在故障转移队列中
@@ -85,6 +98,8 @@ interface ProviderCardProps {
   proxyRecentUsageStats?: ProviderStats;
   /** 一键拉模型探测结果：成功绿边框 / 失败红边框 */
   modelsProbeStatus?: ModelsProbeStatus;
+  /** 最近一次完成的批量探测结果：右侧悬浮状态图标 */
+  modelsProbeHistoryStatus?: ModelsProbeStatus;
   /** 快速定位时的短暂高亮 */
   scrollHighlight?: boolean;
 }
@@ -158,6 +173,7 @@ const extractApiUrl = (provider: Provider, fallbackText: string) => {
 
 export function ProviderCard({
   provider,
+  sequenceNumber,
   isCurrent,
   appId,
   isInConfig = true,
@@ -181,6 +197,7 @@ export function ProviderCard({
   isProxyRunning,
   isProxyTakeover = false,
   dragHandleProps,
+  isDragDisabled = false,
   isAutoFailoverEnabled = false,
   failoverPriority,
   isInFailoverQueue = false,
@@ -192,6 +209,7 @@ export function ProviderCard({
   proxyUsageStats,
   proxyRecentUsageStats,
   modelsProbeStatus = "idle",
+  modelsProbeHistoryStatus,
   scrollHighlight = false,
 }: ProviderCardProps) {
   const { t } = useTranslation();
@@ -450,16 +468,74 @@ export function ProviderCard({
             : "opacity-0",
         )}
       />
+      <div
+        className="absolute right-2 top-2 z-30 rounded-full bg-card/90 p-0.5 shadow-sm ring-1 ring-border/50 backdrop-blur-sm"
+        role="img"
+        title={
+          modelsProbeHistoryStatus === "success"
+            ? t("provider.modelsProbeAvailable", {
+                defaultValue: "上次拉取成功",
+              })
+            : modelsProbeHistoryStatus
+              ? t("provider.modelsProbeUnavailable", {
+                  defaultValue: "上次拉取不可用",
+                })
+              : t("provider.modelsProbeNotChecked", {
+                  defaultValue: "尚未手动拉取",
+                })
+        }
+        aria-label={
+          modelsProbeHistoryStatus === "success"
+            ? t("provider.modelsProbeAvailable", {
+                defaultValue: "上次拉取成功",
+              })
+            : modelsProbeHistoryStatus
+              ? t("provider.modelsProbeUnavailable", {
+                  defaultValue: "上次拉取不可用",
+                })
+              : t("provider.modelsProbeNotChecked", {
+                  defaultValue: "尚未手动拉取",
+                })
+        }
+      >
+        {modelsProbeHistoryStatus === "success" ? (
+          <CircleCheck className="h-4 w-4 text-emerald-500" />
+        ) : modelsProbeHistoryStatus ? (
+          <CircleX className="h-4 w-4 text-red-500" />
+        ) : (
+          <CircleMinus className="h-4 w-4 text-muted-foreground/50" />
+        )}
+      </div>
       <div className="relative flex flex-col gap-3 sm:flex-row sm:items-stretch sm:justify-between">
         <div className="flex min-w-0 flex-1 items-center gap-2">
+          {sequenceNumber !== undefined && (
+            <span
+              className="w-6 shrink-0 text-center text-xs font-semibold tabular-nums text-muted-foreground"
+              aria-label={t("provider.sequenceNumber", {
+                number: sequenceNumber,
+                defaultValue: "序号 {{number}}",
+              })}
+            >
+              {sequenceNumber}
+            </span>
+          )}
           <button
             type="button"
             className={cn(
               "-ml-1.5 flex-shrink-0 cursor-grab active:cursor-grabbing p-1.5",
               "text-muted-foreground/50 hover:text-muted-foreground transition-colors",
               dragHandleProps?.isDragging && "cursor-grabbing",
+              isDragDisabled && "cursor-default opacity-30",
             )}
             aria-label={t("provider.dragHandle")}
+            title={
+              isDragDisabled
+                ? t("provider.dragDisabledHint", {
+                    defaultValue: "切换到自定义排序后可拖拽",
+                  })
+                : t("provider.dragToReorder")
+            }
+            disabled={isDragDisabled}
             {...(dragHandleProps?.attributes ?? {})}
             {...(dragHandleProps?.listeners ?? {})}
           >

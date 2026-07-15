@@ -207,7 +207,7 @@ jobs:
             - 快速定位当前供应商 / 列表滚动条 / 行内改名
             - 跨应用复制供应商（如 Codex → Claude）
             - 新建默认 `openai_chat`（Chat Completions 需路由）
-            - `FEATURE/` 文档已随代码上传，便于对齐主程序
+            - `自用特性/` 文档已随代码上传，便于对齐主程序
 
             > 本 Release 为自用 prerelease；macOS/Linux 多平台请走完整 `release.yml`（需 Apple 签名等密钥）。
           files: release-assets/*

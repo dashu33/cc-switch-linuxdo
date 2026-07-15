@@ -1,7 +1,7 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ReactElement } from "react";
+import { createRef, type ReactElement } from "react";
 import type { Provider } from "@/types";
 import { ProviderList } from "@/components/providers/ProviderList";
 
@@ -121,9 +121,14 @@ function renderWithQueryClient(ui: ReactElement) {
 }
 
 beforeEach(() => {
+  localStorage.removeItem("cc-switch-provider-sort-mode:claude");
   useDragSortMock.mockReset();
   useSortableMock.mockReset();
   providerCardRenderSpy.mockClear();
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
 
   useSortableMock.mockImplementation(({ id }: { id: string }) => ({
     setNodeRef: vi.fn(),
@@ -153,6 +158,7 @@ describe("ProviderList Component", () => {
         onDelete={vi.fn()}
         onDuplicate={vi.fn()}
         onOpenWebsite={vi.fn()}
+        toolbarActions={<button>quick-action</button>}
         isLoading
       />,
     );
@@ -161,6 +167,9 @@ describe("ProviderList Component", () => {
       ".border-dashed.border-muted-foreground\\/40",
     );
     expect(placeholders).toHaveLength(3);
+    expect(screen.getByRole("toolbar")).toContainElement(
+      screen.getByRole("button", { name: "quick-action" }),
+    );
   });
 
   it("should show empty state and trigger create callback when no providers exist", () => {
@@ -182,6 +191,7 @@ describe("ProviderList Component", () => {
         onDuplicate={vi.fn()}
         onOpenWebsite={vi.fn()}
         onCreate={handleCreate}
+        toolbarActions={<button>quick-action</button>}
       />,
     );
 
@@ -191,6 +201,9 @@ describe("ProviderList Component", () => {
     fireEvent.click(addButton);
 
     expect(handleCreate).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("toolbar")).toContainElement(
+      screen.getByRole("button", { name: "quick-action" }),
+    );
   });
 
   it("should render in order returned by useDragSort and pass through action callbacks", () => {
@@ -221,6 +234,10 @@ describe("ProviderList Component", () => {
         onDuplicate={handleDuplicate}
         onConfigureUsage={handleUsage}
         onOpenWebsite={handleOpenWebsite}
+        modelsProbeHistoryById={{
+          a: { status: "failed", at: 10 },
+          b: { status: "success", at: 20 },
+        }}
       />,
     );
 
@@ -228,6 +245,14 @@ describe("ProviderList Component", () => {
     expect(providerCardRenderSpy).toHaveBeenCalledTimes(2);
     expect(providerCardRenderSpy.mock.calls[0][0].provider.id).toBe("b");
     expect(providerCardRenderSpy.mock.calls[1][0].provider.id).toBe("a");
+    expect(providerCardRenderSpy.mock.calls[0][0].sequenceNumber).toBe(1);
+    expect(providerCardRenderSpy.mock.calls[1][0].sequenceNumber).toBe(2);
+    expect(
+      providerCardRenderSpy.mock.calls[0][0].modelsProbeHistoryStatus,
+    ).toBe("success");
+    expect(
+      providerCardRenderSpy.mock.calls[1][0].modelsProbeHistoryStatus,
+    ).toBe("failed");
 
     // Verify current provider marker
     expect(providerCardRenderSpy.mock.calls[0][0].isCurrent).toBe(true);
@@ -235,12 +260,12 @@ describe("ProviderList Component", () => {
     // Drag attributes from useSortable
     expect(
       providerCardRenderSpy.mock.calls[0][0].dragHandleProps?.attributes[
-      "data-dnd-id"
+        "data-dnd-id"
       ],
     ).toBe("b");
     expect(
       providerCardRenderSpy.mock.calls[1][0].dragHandleProps?.attributes[
-      "data-dnd-id"
+        "data-dnd-id"
       ],
     ).toBe("a");
 
@@ -274,8 +299,13 @@ describe("ProviderList Component", () => {
       handleDragEnd: vi.fn(),
     });
 
+    const listRef =
+      createRef<
+        import("@/components/providers/ProviderList").ProviderListHandle
+      >();
     renderWithQueryClient(
       <ProviderList
+        ref={listRef}
         providers={{ alpha: providerAlpha, beta: providerBeta }}
         currentProviderId=""
         appId="claude"
@@ -287,7 +317,7 @@ describe("ProviderList Component", () => {
       />,
     );
 
-    fireEvent.keyDown(window, { key: "f", metaKey: true });
+    act(() => listRef.current?.openSearch());
     const searchInput = screen.getByPlaceholderText(
       "Search name, notes, or URL...",
     );
@@ -298,12 +328,69 @@ describe("ProviderList Component", () => {
     fireEvent.change(searchInput, { target: { value: "beta" } });
     expect(screen.queryByTestId("provider-card-alpha")).not.toBeInTheDocument();
     expect(screen.getByTestId("provider-card-beta")).toBeInTheDocument();
+    expect(providerCardRenderSpy.mock.calls.at(-1)?.[0].sequenceNumber).toBe(2);
 
-    fireEvent.change(searchInput, { target: { value: "gamma" } });
+    fireEvent.keyDown(searchInput, { key: "Enter" });
+    const latestBetaCall = [...providerCardRenderSpy.mock.calls]
+      .reverse()
+      .find(([props]) => props.provider.id === "beta");
+    expect(latestBetaCall?.[0].scrollHighlight).toBe(true);
+
+    act(() => listRef.current?.openSearch());
+    const reopenedSearchInput = screen.getByPlaceholderText(
+      "Search name, notes, or URL...",
+    );
+
+    fireEvent.change(reopenedSearchInput, { target: { value: "gamma" } });
     expect(screen.queryByTestId("provider-card-alpha")).not.toBeInTheDocument();
     expect(screen.queryByTestId("provider-card-beta")).not.toBeInTheDocument();
     expect(
       screen.getByText("No providers match your search."),
     ).toBeInTheDocument();
+  });
+
+  it("persists a view sort mode and disables dragging outside custom order", () => {
+    const older = createProvider({
+      id: "older",
+      name: "Older",
+      createdAt: 100,
+    });
+    const newer = createProvider({
+      id: "newer",
+      name: "Newer",
+      createdAt: 200,
+    });
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [older, newer],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ older, newer }}
+        currentProviderId=""
+        appId="claude"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+
+    providerCardRenderSpy.mockClear();
+    fireEvent.click(
+      screen.getByRole("button", { name: "provider.sortMode.newest" }),
+    );
+
+    expect(localStorage.getItem("cc-switch-provider-sort-mode:claude")).toBe(
+      "newest",
+    );
+    expect(providerCardRenderSpy.mock.calls[0][0].provider.id).toBe("newer");
+    expect(providerCardRenderSpy.mock.calls[0][0].sequenceNumber).toBe(1);
+    expect(providerCardRenderSpy.mock.calls[0][0].isDragDisabled).toBe(true);
+    expect(useSortableMock.mock.calls.at(-1)?.[0].disabled).toBe(true);
   });
 });

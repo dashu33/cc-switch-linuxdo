@@ -28,6 +28,7 @@ import {
   Cpu,
   LayoutDashboard,
   Crosshair,
+  Radar,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -310,6 +311,7 @@ function App() {
     fetchCurrentProviderModels,
     probeResult: modelsProbeResult,
     probeById: modelsProbeById,
+    probeHistoryById: modelsProbeHistoryById,
   } = useFetchCurrentProviderModels(activeApp, providers, currentProviderId);
 
   const handleScrollToCurrentProvider = () => {
@@ -338,7 +340,6 @@ function App() {
       }, delay);
     }
   };
-
 
   const isOpenClawView =
     activeApp === "openclaw" &&
@@ -1175,6 +1176,124 @@ function App() {
     setCurrentView("skillsDiscovery");
   };
 
+  const providerToolbarActions = (
+    <>
+      <S3QuickSyncButtons className="mr-0 h-7 w-7 rounded-md" />
+      <span className="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden="true" />
+      <Button
+        onClick={() => void fetchCurrentProviderModels()}
+        size={
+          modelsProbeResult.status !== "idle" || isFetchingCurrentModels
+            ? "sm"
+            : "icon"
+        }
+        variant="outline"
+        disabled={isFetchingCurrentModels}
+        className={cn(
+          "h-7 transition-colors duration-300",
+          modelsProbeResult.status !== "idle" || isFetchingCurrentModels
+            ? "gap-1.5 px-2 text-xs font-medium"
+            : "w-7 rounded-md",
+          isFetchingCurrentModels || modelsProbeResult.status === "probing"
+            ? "border-amber-500/70 bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 dark:text-amber-300"
+            : modelsProbeResult.status === "success"
+              ? "border-emerald-500 bg-emerald-500/15 text-emerald-700 shadow-sm shadow-emerald-500/20 hover:bg-emerald-500/20 dark:text-emerald-300"
+              : modelsProbeResult.status === "empty"
+                ? "border-orange-500 bg-orange-500/15 text-orange-700 shadow-sm shadow-orange-500/20 hover:bg-orange-500/20 dark:text-orange-300"
+                : modelsProbeResult.status === "failed"
+                  ? "border-red-500 bg-red-500/15 text-red-700 shadow-sm shadow-red-500/20 hover:bg-red-500/20 dark:text-red-300"
+                  : modelsProbeResult.status === "skipped"
+                    ? "border-muted-foreground/40 bg-muted text-muted-foreground"
+                    : "",
+        )}
+        title={
+          isFetchingCurrentModels || modelsProbeResult.status === "probing"
+            ? t("provider.fetchModelsProbeRunning", {
+                success: modelsProbeResult.successCount ?? 0,
+                failed: modelsProbeResult.failedCount ?? 0,
+                total: modelsProbeResult.totalCount ?? 0,
+                defaultValue: `正在批量拉取模型… 可用 ${modelsProbeResult.successCount ?? 0} / 失败 ${modelsProbeResult.failedCount ?? 0}`,
+              })
+            : modelsProbeResult.status === "success"
+              ? t("provider.fetchModelsProbeButtonSuccess", {
+                  count: modelsProbeResult.modelCount ?? 0,
+                  success: modelsProbeResult.successCount ?? 0,
+                  failed: modelsProbeResult.failedCount ?? 0,
+                  empty: modelsProbeResult.emptyCount ?? 0,
+                  defaultValue: `探测完成：可用 ${modelsProbeResult.successCount ?? 0} · 无模型 ${modelsProbeResult.emptyCount ?? 0} · 失败 ${modelsProbeResult.failedCount ?? 0}（卡片边框约 60 秒后复位）`,
+                })
+              : modelsProbeResult.status === "empty"
+                ? t("provider.fetchModelsProbeButtonEmpty", {
+                    empty: modelsProbeResult.emptyCount ?? 0,
+                    defaultValue: "均未返回模型（卡片边框约 60 秒后复位）",
+                  })
+                : modelsProbeResult.status === "failed"
+                  ? t("provider.fetchModelsProbeButtonFailed", {
+                      failed: modelsProbeResult.failedCount ?? 0,
+                      defaultValue: "探测失败较多（卡片边框约 60 秒后复位）",
+                    })
+                  : t("provider.fetchModelsProbe", {
+                      defaultValue:
+                        "一键拉取模型（批量检测全部供应商是否有效）",
+                    })
+        }
+        aria-label={t("provider.fetchModelsProbe", {
+          defaultValue: "一键拉取模型（批量检测全部供应商是否有效）",
+        })}
+      >
+        {isFetchingCurrentModels || modelsProbeResult.status === "probing" ? (
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+        ) : (
+          <Radar className="h-4 w-4 shrink-0" />
+        )}
+        {(isFetchingCurrentModels || modelsProbeResult.status !== "idle") && (
+          <span className="max-w-[9rem] truncate">
+            {isFetchingCurrentModels || modelsProbeResult.status === "probing"
+              ? t("provider.fetchModelsProbeRunningShort", {
+                  ok: modelsProbeResult.successCount ?? 0,
+                  bad: modelsProbeResult.failedCount ?? 0,
+                  defaultValue: `${modelsProbeResult.successCount ?? 0}✓ ${modelsProbeResult.failedCount ?? 0}✗`,
+                })
+              : t("provider.fetchModelsProbeDoneShort", {
+                  ok: modelsProbeResult.successCount ?? 0,
+                  empty: modelsProbeResult.emptyCount ?? 0,
+                  bad: modelsProbeResult.failedCount ?? 0,
+                  defaultValue: `${modelsProbeResult.successCount ?? 0}✓ ${modelsProbeResult.emptyCount ?? 0}○ ${modelsProbeResult.failedCount ?? 0}✗`,
+                })}
+          </span>
+        )}
+      </Button>
+      <Button
+        onClick={() => providerListRef.current?.openSearch()}
+        size="icon"
+        variant="outline"
+        className="h-7 w-7 rounded-md"
+        title={t("provider.searchAndLocate", {
+          defaultValue: "搜索并定位供应商",
+        })}
+        aria-label={t("provider.searchAndLocate", {
+          defaultValue: "搜索并定位供应商",
+        })}
+      >
+        <Search className="h-4 w-4" />
+      </Button>
+      <Button
+        onClick={handleScrollToCurrentProvider}
+        size="icon"
+        variant="outline"
+        className="h-7 w-7 rounded-md"
+        title={t("provider.scrollToCurrent", {
+          defaultValue: "快速定位到正在使用的供应商",
+        })}
+        aria-label={t("provider.scrollToCurrent", {
+          defaultValue: "快速定位到正在使用的供应商",
+        })}
+      >
+        <Crosshair className="h-4 w-4" />
+      </Button>
+    </>
+  );
+
   const renderContent = () => {
     const content = (() => {
       switch (currentView) {
@@ -1278,6 +1397,8 @@ function App() {
                       modelsProbeStatus={modelsProbeResult.status}
                       modelsProbeProviderId={modelsProbeResult.providerId}
                       modelsProbeById={modelsProbeById}
+                      modelsProbeHistoryById={modelsProbeHistoryById}
+                      toolbarActions={providerToolbarActions}
                       onSwitch={switchProvider}
                       onEdit={(provider) => {
                         setEditingProvider(provider);
@@ -1686,110 +1807,6 @@ function App() {
                 )}
                 {currentView === "providers" && (
                   <>
-                    <S3QuickSyncButtons />
-                    <Button
-                      onClick={() => void fetchCurrentProviderModels()}
-                      size={
-                        modelsProbeResult.status !== "idle" ||
-                        isFetchingCurrentModels
-                          ? "sm"
-                          : "icon"
-                      }
-                      variant="outline"
-                      disabled={isFetchingCurrentModels}
-                      className={cn(
-                        "mr-1 transition-colors duration-300",
-                        modelsProbeResult.status !== "idle" ||
-                          isFetchingCurrentModels
-                          ? "h-9 gap-1.5 px-2.5 text-xs font-medium"
-                          : "",
-                        isFetchingCurrentModels ||
-                          modelsProbeResult.status === "probing"
-                          ? "border-amber-500/70 bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 dark:text-amber-300"
-                          : modelsProbeResult.status === "success"
-                            ? "border-emerald-500 bg-emerald-500/15 text-emerald-700 shadow-sm shadow-emerald-500/20 hover:bg-emerald-500/20 dark:text-emerald-300"
-                            : modelsProbeResult.status === "empty"
-                              ? "border-orange-500 bg-orange-500/15 text-orange-700 shadow-sm shadow-orange-500/20 hover:bg-orange-500/20 dark:text-orange-300"
-                              : modelsProbeResult.status === "failed"
-                                ? "border-red-500 bg-red-500/15 text-red-700 shadow-sm shadow-red-500/20 hover:bg-red-500/20 dark:text-red-300"
-                                : modelsProbeResult.status === "skipped"
-                                  ? "border-muted-foreground/40 bg-muted text-muted-foreground"
-                                  : "",
-                      )}
-                      title={
-                        isFetchingCurrentModels ||
-                        modelsProbeResult.status === "probing"
-                          ? t("provider.fetchModelsProbeRunning", {
-                              success: modelsProbeResult.successCount ?? 0,
-                              failed: modelsProbeResult.failedCount ?? 0,
-                              total: modelsProbeResult.totalCount ?? 0,
-                              defaultValue: `正在批量拉取模型… 可用 ${modelsProbeResult.successCount ?? 0} / 失败 ${modelsProbeResult.failedCount ?? 0}`,
-                            })
-                          : modelsProbeResult.status === "success"
-                            ? t("provider.fetchModelsProbeButtonSuccess", {
-                                count: modelsProbeResult.modelCount ?? 0,
-                                success: modelsProbeResult.successCount ?? 0,
-                                failed: modelsProbeResult.failedCount ?? 0,
-                                empty: modelsProbeResult.emptyCount ?? 0,
-                                defaultValue: `探测完成：可用 ${modelsProbeResult.successCount ?? 0} · 无模型 ${modelsProbeResult.emptyCount ?? 0} · 失败 ${modelsProbeResult.failedCount ?? 0}（约 60 秒后复位）`,
-                              })
-                            : modelsProbeResult.status === "empty"
-                              ? t("provider.fetchModelsProbeButtonEmpty", {
-                                  empty: modelsProbeResult.emptyCount ?? 0,
-                                  defaultValue:
-                                    "均未返回模型（橙色；约 60 秒后复位）",
-                                })
-                              : modelsProbeResult.status === "failed"
-                                ? t("provider.fetchModelsProbeButtonFailed", {
-                                    failed: modelsProbeResult.failedCount ?? 0,
-                                    defaultValue:
-                                      "探测失败较多，请看卡片红/橙边框（约 60 秒后复位）",
-                                  })
-                                : t("provider.fetchModelsProbe", {
-                                    defaultValue:
-                                      "一键拉取模型（批量检测全部供应商是否有效）",
-                                  })
-                      }
-                      aria-label={t("provider.fetchModelsProbe", {
-                        defaultValue: "一键拉取模型（批量检测全部供应商是否有效）",
-                      })}
-                    >
-                      {isFetchingCurrentModels ||
-                      modelsProbeResult.status === "probing" ? (
-                        <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-                      ) : (
-                        <Search className="h-4 w-4 shrink-0" />
-                      )}
-                      {(isFetchingCurrentModels ||
-                        modelsProbeResult.status !== "idle") && (
-                        <span className="max-w-[9rem] truncate">
-                          {isFetchingCurrentModels ||
-                          modelsProbeResult.status === "probing"
-                            ? t("provider.fetchModelsProbeRunningShort", {
-                                ok: modelsProbeResult.successCount ?? 0,
-                                bad: modelsProbeResult.failedCount ?? 0,
-                                defaultValue: `${modelsProbeResult.successCount ?? 0}✓ ${modelsProbeResult.failedCount ?? 0}✗`,
-                              })
-                            : t("provider.fetchModelsProbeDoneShort", {
-                                ok: modelsProbeResult.successCount ?? 0,
-                                empty: modelsProbeResult.emptyCount ?? 0,
-                                bad: modelsProbeResult.failedCount ?? 0,
-                                defaultValue: `${modelsProbeResult.successCount ?? 0}✓ ${modelsProbeResult.emptyCount ?? 0}○ ${modelsProbeResult.failedCount ?? 0}✗`,
-                              })}
-                        </span>
-                      )}
-                    </Button>
-                    <Button
-                      onClick={handleScrollToCurrentProvider}
-                      size="icon"
-                      variant="outline"
-                      className="mr-1.5"
-                      title={t("provider.scrollToCurrent", {
-                        defaultValue: "快速定位到正在使用的供应商",
-                      })}
-                    >
-                      <Crosshair className="h-4 w-4" />
-                    </Button>
                     <AppSwitcher
                       activeApp={activeApp}
                       onSwitch={setActiveApp}
@@ -1978,8 +1995,7 @@ function App() {
                         title={
                           quickImportPending
                             ? t("provider.quickImportWaitingHint", {
-                                defaultValue:
-                                  "等待剪贴板补齐中…再次点击可取消",
+                                defaultValue: "等待剪贴板补齐中…再次点击可取消",
                               })
                             : t("provider.quickImport", {
                                 defaultValue: "快速导入",
@@ -2135,4 +2151,3 @@ function App() {
 }
 
 export default App;
-

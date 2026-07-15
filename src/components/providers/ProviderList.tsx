@@ -13,9 +13,18 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, Search, X } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowDownAZ,
+  CalendarArrowDown,
+  CalendarArrowUp,
+  ListOrdered,
+  Search,
+  X,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -47,6 +56,7 @@ import {
 import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { useProviderStats } from "@/lib/query/usage";
 import type { ProviderStats } from "@/types/usage";
@@ -55,10 +65,31 @@ import type {
   ModelsProbeById,
   ModelsProbeStatus,
 } from "@/hooks/useFetchCurrentProviderModels";
+import {
+  isProviderSortMode,
+  sortProvidersByMode,
+  type ProviderSortMode,
+} from "@/utils/providerSort";
+
+const providerSortStorageKey = (appId: AppId) =>
+  `cc-switch-provider-sort-mode:${appId}`;
+
+function readProviderSortMode(appId: AppId): ProviderSortMode {
+  try {
+    const stored = globalThis.localStorage?.getItem(
+      providerSortStorageKey(appId),
+    );
+    return isProviderSortMode(stored) ? stored : "manual";
+  } catch {
+    return "manual";
+  }
+}
 
 export type ProviderListHandle = {
   /** 滚动并高亮当前正在使用的供应商；找不到返回 false */
   scrollToCurrentProvider: () => boolean;
+  /** 打开供应商搜索；按 Enter 后定位首个匹配项 */
+  openSearch: () => void;
 };
 
 interface ProviderListProps {
@@ -89,6 +120,10 @@ interface ProviderListProps {
   modelsProbeProviderId?: string | null;
   /** 批量探测：每张卡独立状态 */
   modelsProbeById?: ModelsProbeById;
+  /** 最近一次完成的批量探测结果，用于持久状态图标 */
+  modelsProbeHistoryById?: ModelsProbeById;
+  /** 与当前 Provider 列表相关的快捷操作，显示在排序子菜单右侧 */
+  toolbarActions?: ReactNode;
 }
 
 export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(function ProviderList({
@@ -117,8 +152,10 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
   modelsProbeStatus = "idle",
   modelsProbeProviderId = null,
   modelsProbeById = {},
+  modelsProbeHistoryById = {},
+  toolbarActions,
 }, ref) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const listRootRef = useRef<HTMLDivElement | null>(null);
   const searchTermRef = useRef("");
   const { checkProvider, isChecking } = useStreamCheck(appId);
@@ -139,10 +176,14 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
   );
 
   // Hermes: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
-  const { data: hermesLiveIds } = useHermesLiveProviderIds(appId === "hermes");
+  const { data: hermesLiveIds } = useHermesLiveProviderIds(
+    appId === "hermes",
+  );
 
   // Hermes: 读取当前 model.provider，用于判断哪个供应商是"当前激活"（高亮）
-  const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
+  const { data: hermesModelConfig } = useHermesModelConfig(
+    appId === "hermes",
+  );
   const hermesCurrentProviderId = hermesModelConfig?.provider;
 
   // 本地 proxy/session 用量：列表级批量拉取一次，按 providerId 分发到卡片
@@ -245,7 +286,8 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
 
   const isProviderDefaultModel = useCallback(
     (providerId: string): boolean => {
-      if (appId !== "openclaw" || !openclawDefaultModel?.primary) return false;
+      if (appId !== "openclaw" || !openclawDefaultModel?.primary)
+        return false;
       return openclawDefaultModel.primary.startsWith(providerId + "/");
     },
     [appId, openclawDefaultModel],
@@ -296,9 +338,16 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
 
   const [searchTerm, setSearchTerm] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [sortMode, setSortMode] = useState<ProviderSortMode>(() =>
+    readProviderSortMode(appId),
+  );
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const [scrollHighlightId, setScrollHighlightId] = useState<string | null>(null);
-  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [scrollHighlightId, setScrollHighlightId] = useState<string | null>(
+    null,
+  );
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const { data: claudeDesktopStatus } = useQuery({
     queryKey: ["claudeDesktopStatus"],
     queryFn: () => providersApi.getClaudeDesktopStatus(),
@@ -340,7 +389,9 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
       if (imported) {
         queryClient.invalidateQueries({ queryKey: ["providers", appId] });
         if (appId === "claude-desktop") {
-          queryClient.invalidateQueries({ queryKey: ["claudeDesktopStatus"] });
+          queryClient.invalidateQueries({
+            queryKey: ["claudeDesktopStatus"],
+          });
         }
         toast.success(t("provider.importCurrentDescription"));
       } else {
@@ -379,6 +430,43 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
     searchTermRef.current = searchTerm;
   }, [searchTerm]);
 
+  useEffect(() => {
+    setSortMode(readProviderSortMode(appId));
+  }, [appId]);
+
+  const selectSortMode = useCallback(
+    (mode: ProviderSortMode) => {
+      setSortMode(mode);
+      try {
+        globalThis.localStorage?.setItem(providerSortStorageKey(appId), mode);
+      } catch {
+        // Sorting still works for this session when storage is unavailable.
+      }
+    },
+    [appId],
+  );
+
+  const displayProviders = useMemo(() => {
+    if (sortMode === "manual") return sortedProviders;
+
+    const locale =
+      i18n.language === "zh"
+        ? "zh-CN"
+        : i18n.language === "zh-TW"
+          ? "zh-TW"
+          : i18n.language === "ja"
+            ? "ja-JP"
+            : "en-US";
+    return sortProvidersByMode(sortedProviders, sortMode, locale);
+  }, [i18n.language, sortMode, sortedProviders]);
+
+  const providerSequenceById = useMemo(
+    () =>
+      new Map(
+        displayProviders.map((provider, index) => [provider.id, index + 1]),
+      ),
+    [displayProviders],
+  );
 
   useEffect(() => {
     if (isSearchOpen) {
@@ -392,14 +480,14 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
 
   const filteredProviders = useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase();
-    if (!keyword) return sortedProviders;
-    return sortedProviders.filter((provider) => {
+    if (!keyword) return displayProviders;
+    return displayProviders.filter((provider) => {
       const fields = [provider.name, provider.notes, provider.websiteUrl];
       return fields.some((field) =>
         field?.toString().toLowerCase().includes(keyword),
       );
     });
-  }, [searchTerm, sortedProviders]);
+  }, [displayProviders, searchTerm]);
 
   /** 与卡片 isCurrent 一致的「正在使用」供应商 ID */
   const resolveInUseProviderId = useCallback((): string | null => {
@@ -448,146 +536,169 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
     };
   }, []);
 
+  const scrollToProvider = useCallback(
+    (targetId: string) => {
+      if (!providers[targetId]) return false;
+      const isTargetVisible = () =>
+        Object.prototype.hasOwnProperty.call(providers, targetId) &&
+        (searchTermRef.current.trim() === "" ||
+          filteredProviders.some((p) => p.id === targetId));
+
+      // 搜索把当前供应商藏起来时，先清空搜索再定位
+      const needClearSearch =
+        !isTargetVisible() && Boolean(searchTermRef.current.trim());
+      if (needClearSearch) {
+        setSearchTerm("");
+        setIsSearchOpen(false);
+      }
+
+      const findScrollableParents = (el: HTMLElement): HTMLElement[] => {
+        const parents: HTMLElement[] = [];
+        let parent: HTMLElement | null = el.parentElement;
+        while (parent) {
+          const style = window.getComputedStyle(parent);
+          const overflowY = style.overflowY;
+          const overflow = style.overflow;
+          const allowsY =
+            overflowY === "auto" ||
+            overflowY === "scroll" ||
+            overflowY === "overlay" ||
+            overflow === "auto" ||
+            overflow === "scroll" ||
+            overflow === "overlay";
+          // flex 布局下 scrollHeight 可能接近 clientHeight，放宽阈值
+          if (allowsY && parent.scrollHeight > parent.clientHeight - 1) {
+            parents.push(parent);
+          }
+          parent = parent.parentElement;
+        }
+        return parents;
+      };
+
+      const scrollProviderIntoView = (el: HTMLElement) => {
+        const scrollParents = findScrollableParents(el);
+        if (scrollParents.length === 0) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          return;
+        }
+
+        // 从最外层到最内层：每层用当前几何位置重算，避免嵌套滚动位移叠加错误
+        // 外层先 instant，最内层 smooth，体感更准
+        const ordered = [...scrollParents].reverse();
+        ordered.forEach((parent, index) => {
+          const parentRect = parent.getBoundingClientRect();
+          const elRect = el.getBoundingClientRect();
+          const delta =
+            elRect.top -
+            parentRect.top -
+            parent.clientHeight / 2 +
+            elRect.height / 2;
+          const nextTop = Math.max(
+            0,
+            Math.min(
+              parent.scrollHeight - parent.clientHeight,
+              parent.scrollTop + delta,
+            ),
+          );
+          const isLast = index === ordered.length - 1;
+          parent.scrollTo({
+            top: nextTop,
+            behavior: isLast ? "smooth" : "auto",
+          });
+        });
+      };
+
+      const queryTargetEl = (): HTMLElement | null => {
+        const safeId =
+          typeof globalThis.CSS !== "undefined" &&
+          typeof globalThis.CSS.escape === "function"
+            ? globalThis.CSS.escape(targetId)
+            : targetId.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        const selector = `[data-provider-id="${safeId}"]`;
+        const scope: ParentNode = listRootRef.current ?? document;
+        const matches = Array.from(
+          scope.querySelectorAll(selector),
+        ) as HTMLElement[];
+        const pool =
+          matches.length > 0
+            ? matches
+            : (Array.from(
+                document.querySelectorAll(selector),
+              ) as HTMLElement[]);
+        if (pool.length === 0) return null;
+        return (
+          pool.find(
+            (node) => node.getAttribute("data-provider-current") === "true",
+          ) ??
+          pool[pool.length - 1] ??
+          null
+        );
+      };
+
+      const runScroll = (): boolean => {
+        const el = queryTargetEl();
+        if (!el) return false;
+        scrollProviderIntoView(el);
+        // smooth 过程中再校正一次，处理双层 overflow 布局滞后
+        window.setTimeout(() => {
+          const latest = queryTargetEl();
+          if (latest) scrollProviderIntoView(latest);
+        }, 120);
+        setScrollHighlightId(targetId);
+        if (highlightTimerRef.current) {
+          clearTimeout(highlightTimerRef.current);
+        }
+        highlightTimerRef.current = setTimeout(() => {
+          setScrollHighlightId((cur) => (cur === targetId ? null : cur));
+        }, 1800);
+        return true;
+      };
+
+      if (runScroll()) return true;
+
+      // 清空搜索 / 列表重渲染后多拍重试
+      const retryDelays = [0, 50, 120, 250, 400];
+      let succeeded = false;
+      for (const delay of retryDelays) {
+        window.setTimeout(() => {
+          if (succeeded) return;
+          if (runScroll()) {
+            succeeded = true;
+          }
+        }, delay);
+      }
+      // 仅在刚清空搜索、等待 DOM 重挂时对调用方返回 true；
+      // loading / 未找到 DOM 时返回 false，让 App 侧继续重试。
+      return needClearSearch;
+    },
+    [filteredProviders, providers],
+  );
+
+  const locateFirstSearchResult = useCallback(() => {
+    const keyword = searchTerm.trim().toLowerCase();
+    if (!keyword) return false;
+    const target =
+      filteredProviders.find(
+        (provider) => provider.name.trim().toLowerCase() === keyword,
+      ) ?? filteredProviders[0];
+    if (!target) return false;
+
+    setIsSearchOpen(false);
+    setSearchTerm("");
+    searchTermRef.current = "";
+    return scrollToProvider(target.id);
+  }, [filteredProviders, scrollToProvider, searchTerm]);
+
   useImperativeHandle(
     ref,
     () => ({
+      openSearch: () => setIsSearchOpen(true),
       scrollToCurrentProvider: () => {
         const targetId = resolveInUseProviderId();
-        if (!targetId) return false;
-
-        const isTargetVisible = () =>
-          Object.prototype.hasOwnProperty.call(providers, targetId) &&
-          (searchTermRef.current.trim() === "" ||
-            filteredProviders.some((p) => p.id === targetId));
-
-        // 搜索把当前供应商藏起来时，先清空搜索再定位
-        const needClearSearch =
-          !isTargetVisible() && Boolean(searchTermRef.current.trim());
-        if (needClearSearch) {
-          setSearchTerm("");
-          setIsSearchOpen(false);
-        }
-
-        const findScrollableParents = (el: HTMLElement): HTMLElement[] => {
-          const parents: HTMLElement[] = [];
-          let parent: HTMLElement | null = el.parentElement;
-          while (parent) {
-            const style = window.getComputedStyle(parent);
-            const overflowY = style.overflowY;
-            const overflow = style.overflow;
-            const allowsY =
-              overflowY === "auto" ||
-              overflowY === "scroll" ||
-              overflowY === "overlay" ||
-              overflow === "auto" ||
-              overflow === "scroll" ||
-              overflow === "overlay";
-            // flex 布局下 scrollHeight 可能接近 clientHeight，放宽阈值
-            if (allowsY && parent.scrollHeight > parent.clientHeight - 1) {
-              parents.push(parent);
-            }
-            parent = parent.parentElement;
-          }
-          return parents;
-        };
-
-        const scrollProviderIntoView = (el: HTMLElement) => {
-          const scrollParents = findScrollableParents(el);
-          if (scrollParents.length === 0) {
-            el.scrollIntoView({ behavior: "smooth", block: "center" });
-            return;
-          }
-
-          // 从最外层到最内层：每层用当前几何位置重算，避免嵌套滚动位移叠加错误
-          // 外层先 instant，最内层 smooth，体感更准
-          const ordered = [...scrollParents].reverse();
-          ordered.forEach((parent, index) => {
-            const parentRect = parent.getBoundingClientRect();
-            const elRect = el.getBoundingClientRect();
-            const delta =
-              elRect.top -
-              parentRect.top -
-              parent.clientHeight / 2 +
-              elRect.height / 2;
-            const nextTop = Math.max(
-              0,
-              Math.min(
-                parent.scrollHeight - parent.clientHeight,
-                parent.scrollTop + delta,
-              ),
-            );
-            const isLast = index === ordered.length - 1;
-            parent.scrollTo({
-              top: nextTop,
-              behavior: isLast ? "smooth" : "auto",
-            });
-          });
-        };
-
-        const queryTargetEl = (): HTMLElement | null => {
-          const safeId =
-            typeof CSS !== "undefined" && typeof CSS.escape === "function"
-              ? CSS.escape(targetId)
-              : targetId.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-          const selector = `[data-provider-id="${safeId}"]`;
-          const scope: ParentNode = listRootRef.current ?? document;
-          const matches = Array.from(
-            scope.querySelectorAll(selector),
-          ) as HTMLElement[];
-          const pool =
-            matches.length > 0
-              ? matches
-              : (Array.from(
-                  document.querySelectorAll(selector),
-                ) as HTMLElement[]);
-          if (pool.length === 0) return null;
-          return (
-            pool.find(
-              (node) => node.getAttribute("data-provider-current") === "true",
-            ) ??
-            pool[pool.length - 1] ??
-            null
-          );
-        };
-
-        const runScroll = (): boolean => {
-          const el = queryTargetEl();
-          if (!el) return false;
-          scrollProviderIntoView(el);
-          // smooth 过程中再校正一次，处理双层 overflow 布局滞后
-          window.setTimeout(() => {
-            const latest = queryTargetEl();
-            if (latest) scrollProviderIntoView(latest);
-          }, 120);
-          setScrollHighlightId(targetId);
-          if (highlightTimerRef.current) {
-            clearTimeout(highlightTimerRef.current);
-          }
-          highlightTimerRef.current = setTimeout(() => {
-            setScrollHighlightId((cur) => (cur === targetId ? null : cur));
-          }, 1800);
-          return true;
-        };
-
-        if (runScroll()) return true;
-
-        // 清空搜索 / 列表重渲染后多拍重试
-        const retryDelays = [0, 50, 120, 250, 400];
-        let succeeded = false;
-        for (const delay of retryDelays) {
-          window.setTimeout(() => {
-            if (succeeded) return;
-            if (runScroll()) {
-              succeeded = true;
-            }
-          }, delay);
-        }
-        // 仅在刚清空搜索、等待 DOM 重挂时对调用方返回 true；
-        // loading / 未找到 DOM 时返回 false，让 App 侧继续重试。
-        return needClearSearch;
+        return targetId ? scrollToProvider(targetId) : false;
       },
     }),
-    [filteredProviders, providers, resolveInUseProviderId],
+    [resolveInUseProviderId, scrollToProvider],
   );
 
   const claudeDesktopStatusMessages = useMemo(() => {
@@ -647,34 +758,11 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
     return messages;
   }, [appId, claudeDesktopStatus, t]);
 
-  if (isLoading) {
-    return (
-      <div className="space-y-3">
-        {[0, 1, 2].map((index) => (
-          <div
-            key={index}
-            className="w-full border border-dashed rounded-lg h-28 border-muted-foreground/40 bg-muted/40"
-          />
-        ))}
-      </div>
-    );
-  }
-
-  if (sortedProviders.length === 0) {
-    return (
-      <ProviderEmptyState
-        appId={appId}
-        onCreate={onCreate}
-        onImport={() => importMutation.mutate()}
-      />
-    );
-  }
-
   const renderProviderList = () => (
     <DndContext
-      sensors={sensors}
+      sensors={sortMode === "manual" ? sensors : []}
       collisionDetection={closestCenter}
-      onDragEnd={handleDragEnd}
+      onDragEnd={sortMode === "manual" ? handleDragEnd : undefined}
     >
       <SortableContext
         items={filteredProviders.map((provider) => provider.id)}
@@ -684,7 +772,8 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
           {filteredProviders.map((provider) => {
             const isOmo = provider.category === "omo";
             const isOmoSlim = provider.category === "omo-slim";
-            const isOmoCurrent = isOmo && provider.id === (currentOmoId || "");
+            const isOmoCurrent =
+              isOmo && provider.id === (currentOmoId || "");
             const isOmoSlimCurrent =
               isOmoSlim && provider.id === (currentOmoSlimId || "");
             const isHermesCurrent =
@@ -693,6 +782,8 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
               <SortableProviderCard
                 key={provider.id}
                 provider={provider}
+                sequenceNumber={providerSequenceById.get(provider.id) ?? 0}
+                dragDisabled={sortMode !== "manual"}
                 isCurrent={
                   isOmo
                     ? isOmoCurrent
@@ -747,6 +838,9 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
                     ? modelsProbeStatus
                     : "idle")
                 }
+                modelsProbeHistoryStatus={
+                  modelsProbeHistoryById[provider.id]?.status
+                }
                 scrollHighlight={scrollHighlightId === provider.id}
               />
             );
@@ -757,7 +851,60 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
   );
 
   return (
-    <div ref={listRootRef} className="mt-4 space-y-4">
+    <div ref={listRootRef} className="space-y-4">
+      <div className="sticky top-0 z-20 flex min-h-12 items-center gap-2 overflow-x-auto border-b border-border/60 bg-background/95 py-2 backdrop-blur-md">
+        <span className="shrink-0 text-xs font-medium text-muted-foreground">
+          {t("provider.sortBy", { defaultValue: "排序" })}
+        </span>
+        <div
+          className="flex shrink-0 items-center gap-1 rounded-md bg-muted p-1"
+          role="group"
+          aria-label={t("provider.sortBy", { defaultValue: "排序" })}
+        >
+          {(
+            [
+              ["manual", ListOrdered],
+              ["newest", CalendarArrowDown],
+              ["oldest", CalendarArrowUp],
+              ["name", ArrowDownAZ],
+            ] as const
+          ).map(([mode, Icon]) => (
+            <Button
+              key={mode}
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1.5 px-2.5 text-xs data-[active=true]:bg-background data-[active=true]:text-foreground data-[active=true]:shadow-sm"
+              data-active={sortMode === mode}
+              aria-pressed={sortMode === mode}
+              onClick={() => selectSortMode(mode)}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {t(`provider.sortMode.${mode}`)}
+            </Button>
+          ))}
+        </div>
+        {toolbarActions && (
+          <div
+            className="ml-auto flex shrink-0 items-center gap-1 border-l border-border/60 pl-2"
+            role="toolbar"
+            aria-label={t("common.actions", { defaultValue: "操作" })}
+          >
+            {toolbarActions}
+          </div>
+        )}
+        <span
+          className={cn(
+            "shrink-0 text-xs tabular-nums text-muted-foreground",
+            !toolbarActions && "ml-auto",
+          )}
+        >
+          {t("provider.providerCount", {
+            count: displayProviders.length,
+            defaultValue: "{{count}} 个供应商",
+          })}
+        </span>
+      </div>
       {claudeDesktopStatusMessages.length > 0 && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
           <div className="flex items-center gap-2 font-medium">
@@ -790,6 +937,12 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
                   ref={searchInputRef}
                   value={searchTerm}
                   onChange={(event) => setSearchTerm(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      locateFirstSearchResult();
+                    }
+                  }}
                   placeholder={t("provider.searchPlaceholder", {
                     defaultValue: "Search name, notes, or URL...",
                   })}
@@ -837,7 +990,22 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
         )}
       </AnimatePresence>
 
-      {filteredProviders.length === 0 ? (
+      {isLoading ? (
+        <div className="space-y-3">
+          {[0, 1, 2].map((index) => (
+            <div
+              key={index}
+              className="w-full border border-dashed rounded-lg h-28 border-muted-foreground/40 bg-muted/40"
+            />
+          ))}
+        </div>
+      ) : sortedProviders.length === 0 ? (
+        <ProviderEmptyState
+          appId={appId}
+          onCreate={onCreate}
+          onImport={() => importMutation.mutate()}
+        />
+      ) : filteredProviders.length === 0 ? (
         <div className="px-6 py-8 text-sm text-center border border-dashed rounded-lg border-border text-muted-foreground">
           {t("provider.noSearchResults", {
             defaultValue: "No providers match your search.",
@@ -852,9 +1020,12 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
 
 interface SortableProviderCardProps {
   provider: Provider;
+  sequenceNumber: number;
+  dragDisabled: boolean;
   proxyUsageStats?: ProviderStats;
   proxyRecentUsageStats?: ProviderStats;
   modelsProbeStatus?: ModelsProbeStatus;
+  modelsProbeHistoryStatus?: ModelsProbeStatus;
   scrollHighlight?: boolean;
   isCurrent: boolean;
   appId: AppId;
@@ -890,6 +1061,8 @@ interface SortableProviderCardProps {
 
 function SortableProviderCard({
   provider,
+  sequenceNumber,
+  dragDisabled,
   isCurrent,
   appId,
   isInConfig,
@@ -922,6 +1095,7 @@ function SortableProviderCard({
   proxyUsageStats,
   proxyRecentUsageStats,
   modelsProbeStatus = "idle",
+  modelsProbeHistoryStatus,
   scrollHighlight = false,
 }: SortableProviderCardProps) {
   const {
@@ -931,7 +1105,7 @@ function SortableProviderCard({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: provider.id });
+  } = useSortable({ id: provider.id, disabled: dragDisabled });
 
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -947,6 +1121,7 @@ function SortableProviderCard({
     >
       <ProviderCard
         provider={provider}
+        sequenceNumber={sequenceNumber}
         isCurrent={isCurrent}
         appId={appId}
         isInConfig={isInConfig}
@@ -976,6 +1151,7 @@ function SortableProviderCard({
           listeners,
           isDragging,
         }}
+        isDragDisabled={dragDisabled}
         isAutoFailoverEnabled={isAutoFailoverEnabled}
         failoverPriority={failoverPriority}
         isInFailoverQueue={isInFailoverQueue}
@@ -987,9 +1163,9 @@ function SortableProviderCard({
         proxyUsageStats={proxyUsageStats}
         proxyRecentUsageStats={proxyRecentUsageStats}
         modelsProbeStatus={modelsProbeStatus}
+        modelsProbeHistoryStatus={modelsProbeHistoryStatus}
         scrollHighlight={scrollHighlight}
       />
     </div>
   );
 }
-

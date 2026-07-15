@@ -191,3 +191,36 @@ KEY：YkhOd1Q0OEhoWkZwM2lUZHRBNjFOR3p4Q1lpNkNyY2Q5WlJzQ0o0NG1xWjhHaDhtOHFYNmRGYm
   });
 
 });
+
+
+describe("newapi_channel_conn import formats", () => {
+  it("parses ascii newapi_channel_conn with markdown url", () => {
+    const text =
+      '{"_type":"newapi_channel_conn","key":"sk-67qDCQDZGkzgeFCuBivFPHmNL9IrCirrVZ4rrWkXzHr5zwXx","url":"[https://api.shirosora.cn](https://api.shirosora.cn/)"}';
+    expect(parseNewApiClipboard(text)).toEqual({
+      baseUrl: "https://api.shirosora.cn",
+      apiKey: "sk-67qDCQDZGkzgeFCuBivFPHmNL9IrCirrVZ4rrWkXzHr5zwXx",
+    });
+  });
+
+  it("parses smart-quoted newapi_channel_conn without mangling host to punycode", () => {
+    // Chinese software often converts JSON quotes to curly quotes when copying.
+    const text =
+      "{\u201c_type\u201d:\u201cnewapi_channel_conn\u201d,\u201ckey\u201d:\u201csk-67qDCQDZGkzgeFCuBivFPHmNL9IrCirrVZ4rrWkXzHr5zwXx\u201d,\u201curl\u201d:\u201c[https://api.shirosora.cn](https://api.shirosora.cn/)\u201d}";
+    const parsed = parseNewApiClipboard(text);
+    expect(parsed).toEqual({
+      baseUrl: "https://api.shirosora.cn",
+      apiKey: "sk-67qDCQDZGkzgeFCuBivFPHmNL9IrCirrVZ4rrWkXzHr5zwXx",
+    });
+    expect(parsed?.baseUrl).not.toContain("xn--");
+  });
+
+  it("parses free-text markdown url contaminated by trailing smart quotes/braces", () => {
+    const text =
+      "key: sk-67qDCQDZGkzgeFCuBivFPHmNL9IrCirrVZ4rrWkXzHr5zwXx\nurl: https://api.shirosora.cn](https://api.shirosora.cn/)\u201d}";
+    expect(parseNewApiClipboard(text)).toEqual({
+      baseUrl: "https://api.shirosora.cn",
+      apiKey: "sk-67qDCQDZGkzgeFCuBivFPHmNL9IrCirrVZ4rrWkXzHr5zwXx",
+    });
+  });
+});

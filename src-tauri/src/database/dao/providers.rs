@@ -186,17 +186,63 @@ impl Database {
         let mut meta_clone = provider.meta.clone().unwrap_or_default();
         let endpoints = std::mem::take(&mut meta_clone.custom_endpoints);
 
-        let existing: Option<(bool, bool)> = tx
+        let existing: Option<(bool, bool, Option<i64>, Option<usize>)> = tx
             .query_row(
-                "SELECT is_current, in_failover_queue FROM providers WHERE id = ?1 AND app_type = ?2",
+                "SELECT is_current, in_failover_queue, created_at, sort_index
+                 FROM providers WHERE id = ?1 AND app_type = ?2",
                 params![provider.id, app_type],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .ok();
 
         let is_update = existing.is_some();
-        let (is_current, in_failover_queue) =
-            existing.unwrap_or((false, provider.in_failover_queue));
+        let (is_current, in_failover_queue, existing_created_at, existing_sort_index) =
+            existing.unwrap_or((false, provider.in_failover_queue, None, None));
+        let created_at = provider
+            .created_at
+            .or(existing_created_at)
+            .or_else(|| (!is_update).then(|| chrono::Utc::now().timestamp_millis()));
+        let sort_index = if let Some(index) = provider.sort_index.or(existing_sort_index) {
+            Some(index)
+        } else if is_update {
+            None
+        } else {
+            let max: Option<i64> = tx
+                .query_row(
+                    "SELECT MAX(sort_index) FROM providers WHERE app_type = ?1",
+                    params![app_type],
+                    |row| row.get(0),
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            let mut next_index = max.map(|value| (value + 1) as usize).unwrap_or(0);
+
+            // Normalize legacy rows before appending. Otherwise an old row with a
+            // NULL sort_index would sort after the newly assigned explicit index.
+            let missing_ids = {
+                let mut stmt = tx
+                    .prepare(
+                        "SELECT id FROM providers
+                         WHERE app_type = ?1 AND sort_index IS NULL
+                         ORDER BY created_at IS NULL, created_at ASC, name COLLATE NOCASE ASC, id ASC",
+                    )
+                    .map_err(|e| AppError::Database(e.to_string()))?;
+                let rows = stmt
+                    .query_map(params![app_type], |row| row.get::<_, String>(0))
+                    .map_err(|e| AppError::Database(e.to_string()))?;
+                rows.collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| AppError::Database(e.to_string()))?
+            };
+            for id in missing_ids {
+                tx.execute(
+                    "UPDATE providers SET sort_index = ?1 WHERE id = ?2 AND app_type = ?3",
+                    params![next_index, id, app_type],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+                next_index += 1;
+            }
+
+            Some(next_index)
+        };
 
         if is_update {
             tx.execute(
@@ -221,8 +267,8 @@ impl Database {
                     })?,
                     provider.website_url,
                     provider.category,
-                    provider.created_at,
-                    provider.sort_index,
+                    created_at,
+                    sort_index,
                     provider.notes,
                     provider.icon,
                     provider.icon_color,
@@ -250,8 +296,8 @@ impl Database {
                         .map_err(|e| AppError::Database(format!("Failed to serialize settings_config: {e}")))?,
                     provider.website_url,
                     provider.category,
-                    provider.created_at,
-                    provider.sort_index,
+                    created_at,
+                    sort_index,
                     provider.notes,
                     provider.icon,
                     provider.icon_color,
@@ -806,3 +852,85 @@ mod ensure_official_seed_tests {
     }
 }
 
+#[cfg(test)]
+mod provider_append_order_tests {
+    use crate::database::Database;
+    use crate::provider::Provider;
+
+    fn provider(id: &str) -> Provider {
+        Provider::with_id(id.to_string(), id.to_string(), serde_json::json!({}), None)
+    }
+
+    #[test]
+    fn inserts_without_order_at_the_end_and_fills_created_at() {
+        let db = Database::memory().expect("memory db");
+
+        let mut positioned = provider("positioned");
+        positioned.sort_index = Some(3);
+        db.save_provider("claude", &positioned)
+            .expect("save positioned provider");
+
+        let appended = provider("appended");
+        db.save_provider("claude", &appended)
+            .expect("save appended provider");
+        let saved = db
+            .get_provider_by_id("appended", "claude")
+            .expect("query appended")
+            .expect("appended exists");
+
+        assert_eq!(saved.sort_index, Some(4));
+        assert!(saved.created_at.is_some());
+    }
+
+    #[test]
+    fn normalizes_legacy_null_order_before_appending() {
+        let db = Database::memory().expect("memory db");
+        {
+            let conn = db.conn.lock().expect("lock db");
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config)
+                 VALUES ('legacy', 'claude', 'Legacy', '{}')",
+                [],
+            )
+            .expect("insert legacy provider");
+        }
+
+        db.save_provider("claude", &provider("new"))
+            .expect("append provider");
+
+        let legacy = db
+            .get_provider_by_id("legacy", "claude")
+            .expect("query legacy")
+            .expect("legacy exists");
+        let new_provider = db
+            .get_provider_by_id("new", "claude")
+            .expect("query new")
+            .expect("new exists");
+        assert_eq!(legacy.sort_index, Some(0));
+        assert_eq!(new_provider.sort_index, Some(1));
+    }
+
+    #[test]
+    fn update_with_missing_metadata_preserves_existing_order_and_time() {
+        let db = Database::memory().expect("memory db");
+        db.save_provider("claude", &provider("existing"))
+            .expect("insert provider");
+        let before = db
+            .get_provider_by_id("existing", "claude")
+            .expect("query before")
+            .expect("provider exists");
+
+        let mut update = provider("existing");
+        update.name = "Renamed".to_string();
+        db.save_provider("claude", &update)
+            .expect("update provider");
+        let after = db
+            .get_provider_by_id("existing", "claude")
+            .expect("query after")
+            .expect("provider exists");
+
+        assert_eq!(after.name, "Renamed");
+        assert_eq!(after.sort_index, before.sort_index);
+        assert_eq!(after.created_at, before.created_at);
+    }
+}

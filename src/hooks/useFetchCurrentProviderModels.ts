@@ -43,6 +43,73 @@ export type ModelsProbeById = Record<string, ModelsProbeEntry>;
 
 const CONCURRENCY = 4;
 const RESULT_TTL_MS = 60_000;
+const PROBE_HISTORY_STORAGE_PREFIX = "cc-switch-models-probe-history:v1:";
+
+const isCompletedProbeStatus = (
+  status: unknown,
+): status is "success" | "empty" | "failed" | "skipped" =>
+  status === "success" ||
+  status === "empty" ||
+  status === "failed" ||
+  status === "skipped";
+
+export function parseModelsProbeHistory(raw: string | null): ModelsProbeById {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+
+    const history: ModelsProbeById = {};
+    for (const [id, value] of Object.entries(parsed)) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const entry = value as Record<string, unknown>;
+      if (!isCompletedProbeStatus(entry.status)) continue;
+      history[id] = {
+        status: entry.status,
+        at: typeof entry.at === "number" ? entry.at : null,
+        ...(typeof entry.modelCount === "number"
+          ? { modelCount: entry.modelCount }
+          : {}),
+        ...(typeof entry.reason === "string" ? { reason: entry.reason } : {}),
+      };
+    }
+    return history;
+  } catch {
+    return {};
+  }
+}
+
+export function readModelsProbeHistory(
+  appId: AppId,
+  storage?: Pick<Storage, "getItem">,
+): ModelsProbeById {
+  try {
+    const target = storage ?? globalThis.localStorage;
+    return parseModelsProbeHistory(
+      target?.getItem(`${PROBE_HISTORY_STORAGE_PREFIX}${appId}`) ?? null,
+    );
+  } catch {
+    return {};
+  }
+}
+
+export function saveModelsProbeHistory(
+  appId: AppId,
+  history: ModelsProbeById,
+  storage?: Pick<Storage, "setItem">,
+) {
+  try {
+    const target = storage ?? globalThis.localStorage;
+    target?.setItem(
+      `${PROBE_HISTORY_STORAGE_PREFIX}${appId}`,
+      JSON.stringify(history),
+    );
+  } catch {
+    // The in-memory result remains available when storage is unavailable.
+  }
+}
 
 /**
  * 一键拉取：批量探测当前 app 下所有可探测供应商的 /models。
@@ -62,6 +129,9 @@ export function useFetchCurrentProviderModels(
     at: null,
   });
   const [probeById, setProbeById] = useState<ModelsProbeById>({});
+  const [probeHistoryById, setProbeHistoryById] = useState<ModelsProbeById>(
+    () => readModelsProbeHistory(appId),
+  );
   const clearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runIdRef = useRef(0);
 
@@ -83,6 +153,7 @@ export function useFetchCurrentProviderModels(
     setIsFetching(false);
     setProbeResult({ status: "idle", providerId: null, at: null });
     setProbeById({});
+    setProbeHistoryById(readModelsProbeHistory(appId));
   }, [appId, clearClearTimer]);
 
   const scheduleAutoClear = useCallback(() => {
@@ -202,6 +273,19 @@ export function useFetchCurrentProviderModels(
     const skippedCount = list.length - probeable.length;
     const results = new Map<string, ModelsProbeEntry>();
 
+    const commitProbeHistory = () => {
+      const completed: ModelsProbeById = {};
+      for (const provider of list) {
+        const entry = results.get(provider.id) ?? initial[provider.id];
+        completed[provider.id] =
+          entry && isCompletedProbeStatus(entry.status)
+            ? entry
+            : { status: "failed", at: Date.now() };
+      }
+      setProbeHistoryById(completed);
+      saveModelsProbeHistory(appId, completed);
+    };
+
     const recount = () => {
       let successCount = 0;
       let emptyCount = 0;
@@ -256,6 +340,7 @@ export function useFetchCurrentProviderModels(
       if (runIdRef.current !== runId) return;
 
       const { successCount, emptyCount, failedCount, totalModels } = recount();
+      commitProbeHistory();
 
       // 汇总顶部按钮态
       let summary: ModelsProbeStatus = "idle";
@@ -309,7 +394,7 @@ export function useFetchCurrentProviderModels(
         {
           description: t("provider.fetchModelsBatchDoneHint", {
             defaultValue:
-              "每张卡片边框与「获取」按钮已按结果着色（约 60 秒后复位）",
+              "卡片边框约 60 秒后复位；右上角状态保留到下次手动拉取",
           }),
           closeButton: true,
         },
@@ -318,6 +403,7 @@ export function useFetchCurrentProviderModels(
       if (runIdRef.current !== runId) return;
       console.warn("[FetchProviderModels] batch failed", err);
       const counts = recount();
+      commitProbeHistory();
       setProbeResult({
         status: "failed",
         providerId: null,
@@ -357,5 +443,6 @@ export function useFetchCurrentProviderModels(
     fetchCurrentProviderModels,
     probeResult,
     probeById,
+    probeHistoryById,
   };
 }

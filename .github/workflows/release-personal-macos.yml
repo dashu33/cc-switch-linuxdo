@@ -284,7 +284,7 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --prerelease \
               --title "CC Switch ${TAG} (personal)" \
-              --notes "Personal prerelease (Windows + unsigned macOS). See FEATURE/RELEASE-NOTES."
+              --notes "Personal prerelease (Windows + unsigned macOS). See 自用特性/发布说明-v3.17.1-自用版.md."
           fi
           gh release upload "$TAG" release-assets/* --clobber --repo "$GITHUB_REPOSITORY"
           echo "✅ Uploaded unsigned macOS assets to release $TAG"

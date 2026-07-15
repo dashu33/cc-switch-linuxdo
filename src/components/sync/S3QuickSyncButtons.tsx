@@ -27,7 +27,7 @@ function formatRemoteDate(value?: string): string {
 }
 
 /**
- * Toolbar quick actions for S3-compatible cloud sync upload/download.
+ * Provider submenu quick actions for S3-compatible cloud sync upload/download.
  * Placed next to the bulk "fetch models" control on the providers view.
  */
 export function S3QuickSyncButtons({ className }: { className?: string }) {

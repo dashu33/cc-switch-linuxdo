@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Provider } from "@/types";
-import { compareProviders, nextProviderSortIndex, sortProvidersList } from "./providerSort";
+import {
+  compareProviders,
+  isProviderSortMode,
+  nextProviderSortIndex,
+  sortProvidersByMode,
+  sortProvidersList,
+} from "./providerSort";
 
 function p(
   partial: Partial<Provider> & Pick<Provider, "id" | "name">,
@@ -56,5 +62,36 @@ describe("providerSort", () => {
         p({ id: "c", name: "C" }),
       ]),
     ).toBe(4);
+  });
+
+  it("supports newest, oldest, and name sort modes", () => {
+    const list = [
+      p({ id: "b", name: "Beta", sortIndex: 0, createdAt: 200 }),
+      p({ id: "a", name: "Alpha", sortIndex: 2, createdAt: 300 }),
+      p({ id: "c", name: "Charlie", sortIndex: 1, createdAt: 100 }),
+    ];
+
+    expect(sortProvidersByMode(list, "newest").map((x) => x.id)).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+    expect(sortProvidersByMode(list, "oldest").map((x) => x.id)).toEqual([
+      "c",
+      "b",
+      "a",
+    ]);
+    expect(sortProvidersByMode(list, "name").map((x) => x.id)).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+  });
+
+  it("validates persisted sort modes", () => {
+    expect(isProviderSortMode("manual")).toBe(true);
+    expect(isProviderSortMode("newest")).toBe(true);
+    expect(isProviderSortMode("unknown")).toBe(false);
+    expect(isProviderSortMode(null)).toBe(false);
   });
 });

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CC Switch 快速导入（识别 URL + KEY）
 // @namespace    https://github.com/farion1231/cc-switch
-// @version      1.0.0
+// @version      1.0.1
 // @description  在网页上自动识别 BASE URL 与 API Key，复用 CC Switch「快速导入」解析逻辑，通过 ccswitch:// 深链接一键导入
 // @author       CC Switch
 // @match        *://*/*
@@ -63,8 +63,33 @@
   const MARKDOWN_LINK_RE = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/gi;
   const PLAIN_KEY_RE = /\b([A-Za-z][A-Za-z0-9._-]{15,127})\b/g;
 
+  function normalizeJsonText(text) {
+    return String(text || "")
+      .replace(/[\u201c\u201d\u201e\u201f\u2033\u2036]/g, '"')
+      .replace(/[\u2018\u2019\u201a\u201b\u2032\u2035]/g, "'")
+      .replace(/\uFF5B/g, "{")
+      .replace(/\uFF5D/g, "}")
+      .replace(/\uFF1A/g, ":")
+      .replace(/\uFF0C/g, ",");
+  }
+
   function cleanToken(value) {
-    return String(value || "").trim().replace(/^["'`]+|["'`,;]+$/g, "");
+    return String(value || "")
+      .trim()
+      .replace(
+        /^["'`\u201c\u201d\u2018\u2019]+|["'`\u201c\u201d\u2018\u2019,;]+$/g,
+        "",
+      );
+  }
+
+  function stripTrailingUrlJunk(value) {
+    let url = String(value || "").trim();
+    let prev = "";
+    while (url !== prev) {
+      prev = url;
+      url = url.replace(/[),.;:}\]"'`\u201c\u201d\u2018\u2019]+$/g, "");
+    }
+    return url;
   }
 
   function stripMarkdownWrapper(value) {
@@ -73,7 +98,13 @@
     if (md && md[2]) return cleanToken(md[2]);
     const bare = trimmed.match(/^\[(https?:\/\/[^\]]+)\]$/i);
     if (bare && bare[1]) return cleanToken(bare[1]);
-    return trimmed;
+    const brokenMd = trimmed.match(
+      /https?:\/\/[^\s"'`<>\]]+\]\((https?:\/\/[^)\s]+)\)/i,
+    );
+    if (brokenMd && brokenMd[1]) return cleanToken(brokenMd[1]);
+    const embedded = trimmed.match(/\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/i);
+    if (embedded && embedded[2]) return cleanToken(embedded[2]);
+    return stripTrailingUrlJunk(trimmed);
   }
 
   function looksLikeUrl(value) {
@@ -173,7 +204,7 @@
   }
 
   function normalizeBaseUrl(raw) {
-    let url = ensureHttps(raw).replace(/[),.;]+$/g, "");
+    let url = stripTrailingUrlJunk(ensureHttps(raw));
     try {
       const parsed = new URL(url);
       ["api_key","apiKey","apikey","key","token","access_token","accessToken"].forEach(function (key) {
@@ -199,11 +230,11 @@
     const urls = [];
     const seen = new Set();
     for (const match of text.matchAll(SCHEME_URL_RE)) {
-      const value = cleanToken(match[0]).replace(/[),.;]+$/g, "");
+      const value = stripMarkdownWrapper(match[0]);
       if (looksLikeUrl(value) && !seen.has(value)) { seen.add(value); urls.push(value); }
     }
     for (const match of text.matchAll(BARE_HOST_RE)) {
-      const value = cleanToken(match[0]).replace(/[),.;]+$/g, "");
+      const value = stripTrailingUrlJunk(cleanToken(match[0]));
       if (!looksLikeUrl(value)) continue;
       if (looksLikeBase64Blob(value) || looksLikeSkKey(value)) continue;
       if (!seen.has(value) && !urls.some(function (u) { return u.includes(value); })) {
@@ -310,22 +341,40 @@
   }
 
   function tryParseJson(text) {
-    const trimmed = text.trim();
-    if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) return null;
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (Array.isArray(parsed)) {
-        for (let i = 0; i < parsed.length; i++) {
-          const item = parsed[i];
-          if (item && typeof item === "object") {
-            const extracted = extractFromRecord(item);
-            if (extracted.baseUrl || extracted.apiKey) return extracted;
+    const trimmed = String(text || "").trim();
+    const normalized = normalizeJsonText(trimmed);
+    if (
+      !(
+        trimmed.startsWith("{") ||
+        trimmed.startsWith("[") ||
+        normalized.startsWith("{") ||
+        normalized.startsWith("[")
+      )
+    ) {
+      return null;
+    }
+
+    const candidates = [trimmed];
+    if (normalized !== trimmed) candidates.push(normalized);
+
+    for (let c = 0; c < candidates.length; c++) {
+      try {
+        const parsed = JSON.parse(candidates[c]);
+        if (Array.isArray(parsed)) {
+          for (let i = 0; i < parsed.length; i++) {
+            const item = parsed[i];
+            if (item && typeof item === "object") {
+              const extracted = extractFromRecord(item);
+              if (extracted.baseUrl || extracted.apiKey) return extracted;
+            }
           }
+          continue;
         }
-        return null;
+        if (parsed && typeof parsed === "object") return extractFromRecord(parsed);
+      } catch (e) {
+        // try next candidate
       }
-      if (parsed && typeof parsed === "object") return extractFromRecord(parsed);
-    } catch (e) { return null; }
+    }
     return null;
   }
 
