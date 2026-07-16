@@ -136,12 +136,32 @@
     "dragHandle": "ドラッグで並べ替え",
     "dragDisabledHint": "カスタム順に切り替えるとドラッグできます",
     "sortBy": "並べ替え",
-    "sortMode": {
+    "sortKey": {
       "manual": "カスタム",
-      "newest": "新しい順",
-      "oldest": "古い順",
+      "created": "作成日時",
+      "recent": "最近使用",
+      "availability": "可用性",
       "name": "名前"
     },
+    "sortKeyHint": {
+      "manual": "ドラッグ/固定したカスタム順",
+      "created": "作成/インポート時刻。昇順/降順で切替",
+      "recent": "直近リクエスト時刻（利用統計 lastUsedAt）",
+      "availability": "モデル取得結果：可用 > なし > 失敗 > スキップ > 未検出",
+      "name": "プロバイダー名"
+    },
+    "sortDirection": {
+      "asc": "昇順",
+      "desc": "降順",
+      "na": "—"
+    },
+    "sortDirectionToggle": "昇順/降順を切替",
+    "filterModelOptions": "モデルサービス",
+    "filterModelOptionsEmpty": "検出済みモデルサービスがありません。先に取得してください",
+    "filterInputPlaceholder": "名前/サービス/URLで絞り込み",
+    "filterInputAriaLabel": "プロバイダーを絞り込み",
+    "onlyAvailable": "可用のみ",
+    "onlyAvailableHint": "モデル取得に成功したプロバイダーのみ表示",
     "providerCount": "{{count}} 件のプロバイダー",
     "sequenceNumber": "番号 {{number}}",
     "searchPlaceholder": "名前・メモ・URLで検索...",
@@ -3052,3 +3072,8 @@
     "refresh": "更新"
   }
 }
+
+
+
+
+

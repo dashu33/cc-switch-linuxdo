@@ -157,3 +157,10 @@ pnpm exec vitest run src/utils/parseNewApiClipboard.test.ts
 ## 相关：默认 openai_chat
 
 见 [../新建供应商默认openai_chat/](../新建供应商默认openai_chat/)。
+
+## 导入后自动探测
+
+- 快速导入成功后复用 `scheduleAutoProbeProviders([provider.id])`。
+- 与新建/复制同一路径：静默 `probeProviders`，延迟约 400ms 后静默探测一次。
+- 探测结果进入可用性排序与状态图标，不自动改写供应商默认模型配置。
+

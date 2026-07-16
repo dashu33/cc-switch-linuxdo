@@ -24,7 +24,9 @@
 - `parseModelsProbeHistory`（兼容旧 v1）
 - `probeProviders(ids, { quiet })`
 - `ProviderCard.canReorder` / `onMoveUp` / `onMoveDown`
-- `ProviderList.probeStatusFilter` / `modelFilter`
+- `ProviderList.probeStatusFilter` / `modelFilter` / `searchTerm` 筛选输入
+- `aggregatedFilterBrands` / `visibleFilterBrands` / `matchesModelBrandKeyword`
+- `createPortal` 模型服务商下拉（body, z-200）
 - `scheduleAutoProbeProviders`
 
 ## 数据流

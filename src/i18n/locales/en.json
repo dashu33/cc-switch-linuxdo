@@ -136,12 +136,32 @@
     "dragHandle": "Drag to reorder",
     "dragDisabledHint": "Switch to Custom order to drag",
     "sortBy": "Sort",
-    "sortMode": {
+    "sortKey": {
       "manual": "Custom",
-      "newest": "Newest",
-      "oldest": "Oldest",
+      "created": "Created",
+      "recent": "Recently used",
+      "availability": "Availability",
       "name": "Name"
     },
+    "sortKeyHint": {
+      "manual": "Your drag/pin custom order",
+      "created": "By create/import time; use asc/desc",
+      "recent": "By last request time from usage stats",
+      "availability": "By model probe: available > empty > failed > skipped > unchecked",
+      "name": "By provider name"
+    },
+    "sortDirection": {
+      "asc": "Asc",
+      "desc": "Desc",
+      "na": "—"
+    },
+    "sortDirectionToggle": "Toggle ascending/descending",
+    "filterModelOptions": "Model brands",
+    "filterModelOptionsEmpty": "No model brands yet. Fetch models first.",
+    "filterInputPlaceholder": "Filter name/brand/URL",
+    "filterInputAriaLabel": "Filter providers",
+    "onlyAvailable": "Available only",
+    "onlyAvailableHint": "Show only providers whose model probe succeeded",
     "providerCount": "{{count}} providers",
     "sequenceNumber": "Number {{number}}",
     "searchPlaceholder": "Search name, notes, or URL...",
@@ -3052,3 +3072,8 @@
     "refresh": "Refresh"
   }
 }
+
+
+
+
+

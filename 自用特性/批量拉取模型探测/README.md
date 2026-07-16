@@ -52,7 +52,7 @@ useFetchCurrentProviderModels
   └─ probeHistoryById → ProviderCard.modelsProbeHistoryStatus（持久图标）
 ```
 
-持久化键：`cc-switch-models-probe-history:v1:<appId>`。保存 provider ID、终态、时间、模型数、可选 `modelIds` 样本（最多 24）和跳过原因，不保存 URL、API Key 等凭证。旧 v1 无 `modelIds` 仍可解析。导入/新建可通过 `probeProviders` 静默单条合并历史。新一轮全量探测进行中保留旧图标，整批结束后才替换。行 UI 细节见 [../供应商行UI压缩与筛选/](../供应商行UI压缩与筛选/)。
+持久化键：`cc-switch-models-probe-history:v1:<appId>`。保存 provider ID、终态、时间、模型数、可选 `modelIds` 样本（最多 80，品牌优先采样）和跳过原因，不保存 URL、API Key 等凭证。旧 v1 无 `modelIds` 仍可解析。导入/新建可通过 `probeProviders` 静默单条合并历史。新一轮全量探测进行中保留旧图标，整批结束后才替换。行 UI 细节见 [../供应商行UI压缩与筛选/](../供应商行UI压缩与筛选/)。
 
 ## 搜索并定位
 
@@ -123,3 +123,4 @@ useFetchCurrentProviderModels
 - 代码地图：[CODEMAP.md](./CODEMAP.md)
 - Codex 快速调整：[../Codex供应商快速调整/](../Codex供应商快速调整/)
 - 快速定位：[../快速定位当前供应商/](../快速定位当前供应商/)
+

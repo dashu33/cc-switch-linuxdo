@@ -331,7 +331,6 @@ function App() {
     },
     [fetchCurrentProviderModels, probeProviders],
   );
-
   const handleScrollToCurrentProvider = () => {
     // list 可能尚未挂载（loading / 切应用）时多拍重试
     const tryScroll = () =>
@@ -1210,8 +1209,8 @@ function App() {
 
   const providerToolbarActions = (
     <>
-      <S3QuickSyncButtons className="mr-0 h-7 w-7 rounded-md" />
-      <span className="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden="true" />
+      <S3QuickSyncButtons className="mr-0 h-9 w-9 rounded-md" />
+      <span className="mx-0.5 h-5 w-px shrink-0 bg-border" aria-hidden="true" />
       <Button
         onClick={() => void fetchCurrentProviderModels()}
         size={
@@ -1222,10 +1221,10 @@ function App() {
         variant="outline"
         disabled={isFetchingCurrentModels}
         className={cn(
-          "h-7 transition-colors duration-300",
+          "h-9 transition-colors duration-300",
           modelsProbeResult.status !== "idle" || isFetchingCurrentModels
             ? "gap-1.5 px-2 text-xs font-medium"
-            : "w-7 rounded-md",
+            : "w-9 rounded-md",
           isFetchingCurrentModels || modelsProbeResult.status === "probing"
             ? "border-amber-500/70 bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 dark:text-amber-300"
             : modelsProbeResult.status === "success"
@@ -1299,7 +1298,7 @@ function App() {
         onClick={() => providerListRef.current?.openSearch()}
         size="icon"
         variant="outline"
-        className="h-7 w-7 rounded-md"
+        className="h-9 w-9 rounded-md"
         title={t("provider.searchAndLocate", {
           defaultValue: "搜索并定位供应商",
         })}
@@ -1313,7 +1312,7 @@ function App() {
         onClick={handleScrollToCurrentProvider}
         size="icon"
         variant="outline"
-        className="h-7 w-7 rounded-md"
+        className="h-9 w-9 rounded-md"
         title={t("provider.scrollToCurrent", {
           defaultValue: "快速定位到正在使用的供应商",
         })}
@@ -2185,3 +2184,6 @@ function App() {
 }
 
 export default App;
+
+
+

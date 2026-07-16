@@ -136,12 +136,32 @@
     "dragHandle": "拖拽排序",
     "dragDisabledHint": "切换到自定义排序后可拖拽",
     "sortBy": "排序",
-    "sortMode": {
+    "sortKey": {
       "manual": "自定义",
-      "newest": "最新",
-      "oldest": "最早",
+      "created": "创建时间",
+      "recent": "最近使用",
+      "availability": "可用性",
       "name": "名称"
     },
+    "sortKeyHint": {
+      "manual": "按你拖拽/置顶后的自定义顺序",
+      "created": "按供应商创建/导入时间；配合升序/降序",
+      "recent": "按最近一次调用时间（用量统计 lastUsedAt）",
+      "availability": "按模型拉取结果：可用 > 无模型 > 失败 > 跳过 > 未检测",
+      "name": "按供应商名称"
+    },
+    "sortDirection": {
+      "asc": "升序",
+      "desc": "降序",
+      "na": "—"
+    },
+    "sortDirectionToggle": "切换升序/降序",
+    "filterModelOptions": "模型服务商",
+    "filterModelOptionsEmpty": "暂无探测到的模型服务商，请先一键拉取",
+    "filterInputPlaceholder": "筛选名称/服务商/网址",
+    "filterInputAriaLabel": "筛选供应商",
+    "onlyAvailable": "仅显示可用",
+    "onlyAvailableHint": "仅显示模型拉取成功的供应商",
     "providerCount": "{{count}} 个供应商",
     "sequenceNumber": "序号 {{number}}",
     "searchPlaceholder": "按名称/备注/网址搜索供应商...",
@@ -3052,3 +3072,8 @@
     "refresh": "刷新"
   }
 }
+
+
+
+
+

@@ -136,12 +136,32 @@
     "dragHandle": "拖曳排序",
     "dragDisabledHint": "切換到自訂排序後可拖曳",
     "sortBy": "排序",
-    "sortMode": {
+    "sortKey": {
       "manual": "自訂",
-      "newest": "最新",
-      "oldest": "最早",
+      "created": "建立時間",
+      "recent": "最近使用",
+      "availability": "可用性",
       "name": "名稱"
     },
+    "sortKeyHint": {
+      "manual": "依你拖曳/置頂後的自訂順序",
+      "created": "依供應商建立/匯入時間；配合升序/降序",
+      "recent": "依最近一次呼叫時間（用量統計 lastUsedAt）",
+      "availability": "依模型拉取結果：可用 > 無模型 > 失敗 > 跳過 > 未檢測",
+      "name": "依供應商名稱"
+    },
+    "sortDirection": {
+      "asc": "升序",
+      "desc": "降序",
+      "na": "—"
+    },
+    "sortDirectionToggle": "切換升序/降序",
+    "filterModelOptions": "模型服務商",
+    "filterModelOptionsEmpty": "暫無探測到的模型服務商，請先一鍵拉取",
+    "filterInputPlaceholder": "篩選名稱/服務商/網址",
+    "filterInputAriaLabel": "篩選供應商",
+    "onlyAvailable": "僅顯示可用",
+    "onlyAvailableHint": "僅顯示模型拉取成功的供應商",
     "providerCount": "{{count}} 個供應商",
     "sequenceNumber": "序號 {{number}}",
     "searchPlaceholder": "依名稱/備註/網址搜尋供應商...",
@@ -3024,3 +3044,8 @@
     "refresh": "重新整理"
   }
 }
+
+
+
+
+

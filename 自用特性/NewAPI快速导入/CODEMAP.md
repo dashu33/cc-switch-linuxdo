@@ -83,3 +83,12 @@ Header「快速导入」按钮
 - [ ] 创建后名称是「日期时间+URL」
 - [ ] `websiteUrl === baseUrl`
 - [ ] 同步成功后供应商列表刷新
+
+## 自动探测
+
+| 符号/路径 | 角色 |
+|---|---|
+| `src/App.tsx` → `createNewApiFromCredentials` | 快速导入成功后调用 `scheduleAutoProbeProviders([provider.id])` |
+| `src/App.tsx` → `scheduleAutoProbeProviders` | 与新建/复制共用；对指定 id 静默探测（无重试） |
+| `src/hooks/useFetchCurrentProviderModels.ts` → `probeProviders` | 实际 `/models` 探测与历史合并 |
+

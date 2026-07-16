@@ -15,14 +15,16 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertTriangle,
   ArrowDownAZ,
-  CalendarArrowDown,
-  CalendarArrowUp,
+  CircleCheck,
+  Clock3,
   Filter,
   ListOrdered,
+  CalendarDays,
   Search,
   X,
 } from "lucide-react";
@@ -43,6 +45,7 @@ import {
 } from "@/hooks/useHermes";
 import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
+import { ProviderIcon } from "@/components/ProviderIcon";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
 import {
   useAutoFailoverEnabled,
@@ -57,6 +60,7 @@ import {
 import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Popover,
   PopoverContent,
@@ -72,22 +76,67 @@ import type {
   ModelsProbeStatus,
 } from "@/hooks/useFetchCurrentProviderModels";
 import {
-  isProviderSortMode,
-  sortProvidersByMode,
-  type ProviderSortMode,
+  isProviderSortDirection,
+  isProviderSortKey,
+  migrateLegacyProviderSortMode,
+  sortProvidersByKey,
+  type ProviderSortDirection,
+  type ProviderSortKey,
 } from "@/utils/providerSort";
+import { inferModelBrand } from "@/utils/modelBrandIcon";
 
-const providerSortStorageKey = (appId: AppId) =>
+const providerSortKeyStorage = (appId: AppId) =>
+  `cc-switch-provider-sort-key:${appId}`;
+const providerSortDirectionStorage = (appId: AppId) =>
+  `cc-switch-provider-sort-direction:${appId}`;
+/** legacy single-token storage from older builds */
+const providerSortLegacyStorage = (appId: AppId) =>
   `cc-switch-provider-sort-mode:${appId}`;
 
-function readProviderSortMode(appId: AppId): ProviderSortMode {
+function readProviderSortPreference(appId: AppId): {
+  key: ProviderSortKey;
+  direction: ProviderSortDirection;
+} {
   try {
-    const stored = globalThis.localStorage?.getItem(
-      providerSortStorageKey(appId),
+    const keyStored = globalThis.localStorage?.getItem(
+      providerSortKeyStorage(appId),
     );
-    return isProviderSortMode(stored) ? stored : "manual";
+    const dirStored = globalThis.localStorage?.getItem(
+      providerSortDirectionStorage(appId),
+    );
+    if (isProviderSortKey(keyStored)) {
+      return {
+        key: keyStored,
+        direction: isProviderSortDirection(dirStored)
+          ? dirStored
+          : keyStored === "name"
+            ? "asc"
+            : "desc",
+      };
+    }
+
+    const legacy = globalThis.localStorage?.getItem(
+      providerSortLegacyStorage(appId),
+    );
+    return migrateLegacyProviderSortMode(legacy);
   } catch {
-    return "manual";
+    return { key: "manual", direction: "asc" };
+  }
+}
+
+function persistProviderSortPreference(
+  appId: AppId,
+  key: ProviderSortKey,
+  direction: ProviderSortDirection,
+) {
+  try {
+    globalThis.localStorage?.setItem(providerSortKeyStorage(appId), key);
+    globalThis.localStorage?.setItem(
+      providerSortDirectionStorage(appId),
+      direction,
+    );
+  } catch {
+    // Sorting still works for this session when storage is unavailable.
   }
 }
 
@@ -143,7 +192,68 @@ interface ProviderListProps {
   onAutoProbeProviders?: (providerIds?: string[]) => void;
 }
 
-export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(function ProviderList({
+const PRIORITY_FILTER_BRANDS = ["claude", "openai", "grok", "zhipu"] as const;
+
+const FILTER_BRAND_LABELS: Record<string, string> = {
+  claude: "Claude",
+  openai: "ChatGPT",
+  grok: "Grok",
+  zhipu: "GLM",
+  gemini: "Gemini",
+  deepseek: "DeepSeek",
+  qwen: "Qwen",
+  kimi: "Kimi",
+  mistral: "Mistral",
+  meta: "Meta",
+  minimax: "MiniMax",
+  doubao: "Doubao",
+  hunyuan: "Hunyuan",
+  cohere: "Cohere",
+  perplexity: "Perplexity",
+  ollama: "Ollama",
+  openrouter: "OpenRouter",
+  copilot: "Copilot",
+  azure: "Azure",
+  other: "其他",
+};
+
+const getFilterBrandLabel = (brand: string) =>
+  FILTER_BRAND_LABELS[brand] ??
+  (brand ? brand.charAt(0).toUpperCase() + brand.slice(1) : "其他");
+
+const matchesModelBrandKeyword = (
+  modelIds: string[] | undefined,
+  keyword: string,
+) => {
+  const key = keyword.trim().toLowerCase();
+  if (!key) return true;
+  for (const rawId of modelIds ?? []) {
+    const id = rawId?.trim();
+    if (!id) continue;
+    if (id.toLowerCase().includes(key)) return true;
+    const brandInfo = inferModelBrand(id);
+    const brand = brandInfo?.brand ?? "other";
+    const label = getFilterBrandLabel(brand).toLowerCase();
+    if (brand.toLowerCase().includes(key) || label.includes(key)) return true;
+    if (
+      brand === "openai" &&
+      (key === "chatgpt" || key === "gpt" || key === "openai")
+    ) {
+      return true;
+    }
+    if (
+      brand === "zhipu" &&
+      (key === "glm" || key === "zhipu" || key === "chatglm")
+    ) {
+      return true;
+    }
+  }
+  return false;
+};
+
+export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(
+  function ProviderList(
+    {
   providers,
   currentProviderId,
   appId,
@@ -358,9 +468,27 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
   const [probeStatusFilter, setProbeStatusFilter] = useState<
     "all" | "success" | "failed" | "empty" | "skipped" | "unchecked"
   >("all");
+  // 快捷筛选：仅显示模型探测成功的供应商（放在排序名称后）
+  const [onlyAvailable, setOnlyAvailable] = useState(false);
+  const [isModelFilterMenuOpen, setIsModelFilterMenuOpen] = useState(false);
+  const [modelFilterMenuPos, setModelFilterMenuPos] = useState<{
+    top: number;
+    left: number;
+    width: number;
+  } | null>(null);
+  const modelFilterWrapRef = useRef<HTMLDivElement>(null);
   const [modelFilter, setModelFilter] = useState("");
-  const [sortMode, setSortMode] = useState<ProviderSortMode>(() =>
-    readProviderSortMode(appId),
+  const initialSortPreference = useMemo(
+    () => readProviderSortPreference(appId),
+    // only seed from storage for the first mount of this list instance
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+  const [sortKey, setSortKey] = useState<ProviderSortKey>(
+    () => initialSortPreference.key,
+  );
+  const [sortDirection, setSortDirection] = useState<ProviderSortDirection>(
+    () => initialSortPreference.direction,
   );
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [scrollHighlightId, setScrollHighlightId] = useState<string | null>(
@@ -454,33 +582,53 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
   }, [searchTerm]);
 
   useEffect(() => {
-    setSortMode(readProviderSortMode(appId));
+    const preference = readProviderSortPreference(appId);
+    setSortKey(preference.key);
+    setSortDirection(preference.direction);
   }, [appId]);
 
-  const selectSortMode = useCallback(
-    (mode: ProviderSortMode) => {
-      setSortMode(mode);
-      try {
-        globalThis.localStorage?.setItem(providerSortStorageKey(appId), mode);
-      } catch {
-        // Sorting still works for this session when storage is unavailable.
-      }
+  const selectSortKey = useCallback(
+    (key: ProviderSortKey) => {
+      setSortKey((prev) => {
+        if (prev === key && key !== "manual") {
+          setSortDirection((dir) => {
+            const next = dir === "asc" ? "desc" : "asc";
+            persistProviderSortPreference(appId, key, next);
+            return next;
+          });
+          return prev;
+        }
+        const nextDirection: ProviderSortDirection =
+          key === "name" ? "asc" : key === "manual" ? "asc" : "desc";
+        persistProviderSortPreference(appId, key, nextDirection);
+        setSortDirection(nextDirection);
+        return key;
+      });
     },
     [appId],
   );
 
-  const handlePinProviderToTop = useCallback(
+const handlePinProviderToTop = useCallback(
     async (providerId: string) => {
-      if (sortMode !== "manual") {
-        selectSortMode("manual");
-      }
+      if (sortKey !== "manual") { selectSortKey("manual"); }
       await pinProviderToTop(providerId);
     },
-    [pinProviderToTop, selectSortMode, sortMode],
+    [pinProviderToTop, selectSortKey, sortKey],
   );
 
+  const recentSortById = useMemo(() => {
+    const map: Record<string, { lastUsedAt?: number | null }> = {};
+    for (const provider of sortedProviders) {
+      const stats = resolveProviderStats(provider);
+      if (stats?.lastUsedAt != null) {
+        map[provider.id] = { lastUsedAt: stats.lastUsedAt };
+      }
+    }
+    return map;
+  }, [resolveProviderStats, sortedProviders]);
+
   const displayProviders = useMemo(() => {
-    if (sortMode === "manual") return sortedProviders;
+    if (sortKey === "manual") return sortedProviders;
 
     const locale =
       i18n.language === "zh"
@@ -490,8 +638,23 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
           : i18n.language === "ja"
             ? "ja-JP"
             : "en-US";
-    return sortProvidersByMode(sortedProviders, sortMode, locale);
-  }, [i18n.language, sortMode, sortedProviders]);
+    return sortProvidersByKey(sortedProviders, sortKey, locale, {
+      direction: sortDirection,
+      availability: {
+        liveById: modelsProbeById,
+        historyById: modelsProbeHistoryById,
+      },
+      recentById: recentSortById,
+    });
+  }, [
+    i18n.language,
+    modelsProbeById,
+    modelsProbeHistoryById,
+    recentSortById,
+    sortDirection,
+    sortKey,
+    sortedProviders,
+  ]);
 
   const providerSequenceById = useMemo(
     () =>
@@ -518,17 +681,20 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
     return displayProviders.filter((provider) => {
       if (keyword) {
         const fields = [provider.name, provider.notes, provider.websiteUrl];
-        const matched = fields.some((field) =>
+        const textMatched = fields.some((field) =>
           field?.toString().toLowerCase().includes(keyword),
         );
-        if (!matched) return false;
+        const modelIds = modelsProbeHistoryById[provider.id]?.modelIds ?? [];
+        const modelMatched = matchesModelBrandKeyword(modelIds, keyword);
+        if (!textMatched && !modelMatched) return false;
       }
 
-      if (probeStatusFilter !== "all") {
+      const effectiveProbeFilter = onlyAvailable ? "success" : probeStatusFilter;
+      if (effectiveProbeFilter !== "all") {
         const status = modelsProbeHistoryById[provider.id]?.status;
-        if (probeStatusFilter === "unchecked") {
+        if (effectiveProbeFilter === "unchecked") {
           if (status) return false;
-        } else if (status !== probeStatusFilter) {
+        } else if (status !== effectiveProbeFilter) {
           return false;
         }
       }
@@ -547,12 +713,148 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
     displayProviders,
     modelFilter,
     modelsProbeHistoryById,
+    onlyAvailable,
     probeStatusFilter,
     searchTerm,
   ]);
 
   const hasActiveFilters =
-    probeStatusFilter !== "all" || modelFilter.trim().length > 0;
+    onlyAvailable ||
+    probeStatusFilter !== "all" ||
+    modelFilter.trim().length > 0;
+
+  type AggregatedFilterBrand = {
+    brand: string;
+    label: string;
+    icon?: string;
+    iconColor?: string;
+    providerCount: number;
+    modelCount: number;
+  };
+
+  const aggregatedFilterBrands = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        brand: string;
+        icon?: string;
+        iconColor?: string;
+        providerIds: Set<string>;
+        modelIds: Set<string>;
+      }
+    >();
+
+    for (const [providerId, entry] of Object.entries(modelsProbeHistoryById)) {
+      const ids = entry?.modelIds ?? [];
+      for (const rawId of ids) {
+        const id = rawId?.trim();
+        if (!id) continue;
+        const brandInfo = inferModelBrand(id);
+        const brand = brandInfo?.brand ?? "other";
+        const current = map.get(brand);
+        if (current) {
+          current.providerIds.add(providerId);
+          current.modelIds.add(id);
+          continue;
+        }
+        map.set(brand, {
+          brand,
+          icon: brandInfo?.icon,
+          iconColor: brandInfo?.iconColor,
+          providerIds: new Set([providerId]),
+          modelIds: new Set([id]),
+        });
+      }
+    }
+
+    const list: AggregatedFilterBrand[] = Array.from(map.values()).map(
+      (item) => ({
+        brand: item.brand,
+        label: getFilterBrandLabel(item.brand),
+        icon: item.icon,
+        iconColor: item.iconColor,
+        providerCount: item.providerIds.size,
+        modelCount: item.modelIds.size,
+      }),
+    );
+
+    const priorityIndex = (brand: string) => {
+      const idx = PRIORITY_FILTER_BRANDS.indexOf(
+        brand as (typeof PRIORITY_FILTER_BRANDS)[number],
+      );
+      return idx === -1 ? PRIORITY_FILTER_BRANDS.length : idx;
+    };
+
+    list.sort((a, b) => {
+      const pa = priorityIndex(a.brand);
+      const pb = priorityIndex(b.brand);
+      if (pa !== pb) return pa - pb;
+      return a.label.localeCompare(b.label, "en", { sensitivity: "base" });
+    });
+
+    return list;
+  }, [modelsProbeHistoryById]);
+
+  const visibleFilterBrands = useMemo(() => {
+    const keyword = searchTerm.trim().toLowerCase();
+    if (!keyword) return aggregatedFilterBrands;
+    return aggregatedFilterBrands.filter((item) => {
+      return (
+        item.brand.toLowerCase().includes(keyword) ||
+        item.label.toLowerCase().includes(keyword)
+      );
+    });
+  }, [aggregatedFilterBrands, searchTerm]);
+
+  useEffect(() => {
+    if (!isModelFilterMenuOpen) {
+      setModelFilterMenuPos(null);
+      return;
+    }
+
+    const updatePosition = () => {
+      const el = modelFilterWrapRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const width = Math.min(Math.max(rect.width, 28 * 16), window.innerWidth - 16);
+      let left = rect.left;
+      if (left + width > window.innerWidth - 8) {
+        left = Math.max(8, window.innerWidth - width - 8);
+      }
+      setModelFilterMenuPos({
+        top: rect.bottom + 6,
+        left,
+        width,
+      });
+    };
+
+    updatePosition();
+
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (modelFilterWrapRef.current?.contains(target)) return;
+      const menu = document.getElementById("provider-model-filter-menu");
+      if (menu?.contains(target)) return;
+      setIsModelFilterMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsModelFilterMenuOpen(false);
+    };
+
+    window.addEventListener("resize", updatePosition);
+    // capture scroll from nested containers too
+    window.addEventListener("scroll", updatePosition, true);
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [isModelFilterMenuOpen]);
+
 
   /** 与卡片 isCurrent 一致的「正在使用」供应商 ID */
   const resolveInUseProviderId = useCallback((): string | null => {
@@ -825,9 +1127,9 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
 
   const renderProviderList = () => (
     <DndContext
-      sensors={sortMode === "manual" ? sensors : []}
+      sensors={sortKey === "manual" ? sensors : []}
       collisionDetection={closestCenter}
-      onDragEnd={sortMode === "manual" ? handleDragEnd : undefined}
+      onDragEnd={sortKey === "manual" ? handleDragEnd : undefined}
     >
       <SortableContext
         items={filteredProviders.map((provider) => provider.id)}
@@ -848,7 +1150,7 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
                 key={provider.id}
                 provider={provider}
                 sequenceNumber={providerSequenceById.get(provider.id) ?? 0}
-                dragDisabled={sortMode !== "manual"}
+                dragDisabled={sortKey !== "manual"}
                 isCurrent={
                   isOmo
                     ? isOmoCurrent
@@ -914,13 +1216,13 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
                     ? (entry) => onModelsProbeResult(provider.id, entry)
                     : undefined
                 }
-                canReorder={sortMode === "manual"}
+                canReorder={sortKey === "manual"}
                 canMoveUp={
-                  sortMode === "manual" &&
+                  sortKey === "manual" &&
                   (providerSequenceById.get(provider.id) ?? 0) > 1
                 }
                 canMoveDown={
-                  sortMode === "manual" &&
+                  sortKey === "manual" &&
                   (providerSequenceById.get(provider.id) ?? 0) <
                     displayProviders.length
                 }
@@ -939,41 +1241,181 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
 
   return (
     <div ref={listRootRef} className="space-y-4">
-      <div className="sticky top-0 z-20 flex min-h-12 items-center gap-2 overflow-x-auto border-b border-border/60 bg-background/95 py-2 backdrop-blur-md">
-        <span className="shrink-0 text-xs font-medium text-muted-foreground">
-          {t("provider.sortBy", { defaultValue: "排序" })}
-        </span>
+      <div className="sticky top-0 z-40 flex min-h-12 items-center gap-2 overflow-x-auto border-b border-border/60 bg-background/95 py-2 backdrop-blur-md">
         <div
-          className="flex shrink-0 items-center gap-1 rounded-md bg-muted p-1"
+          className="flex h-9 shrink-0 items-center gap-1 rounded-md bg-muted p-1"
           role="group"
           aria-label={t("provider.sortBy", { defaultValue: "排序" })}
         >
           {(
             [
               ["manual", ListOrdered],
-              ["newest", CalendarArrowDown],
-              ["oldest", CalendarArrowUp],
+              ["created", CalendarDays],
+              ["recent", Clock3],
+              ["availability", CircleCheck],
               ["name", ArrowDownAZ],
             ] as const
-          ).map(([mode, Icon]) => (
+          ).map(([key, Icon]) => (
             <Button
-              key={mode}
+              key={key}
               type="button"
               variant="ghost"
               size="sm"
               className="h-7 gap-1.5 px-2.5 text-xs data-[active=true]:bg-background data-[active=true]:text-foreground data-[active=true]:shadow-sm"
-              data-active={sortMode === mode}
-              aria-pressed={sortMode === mode}
-              onClick={() => selectSortMode(mode)}
+              data-active={sortKey === key}
+              aria-pressed={sortKey === key}
+              title={t(`provider.sortKeyHint.${key}`, {
+                defaultValue: t(`provider.sortKey.${key}`),
+              })}
+              onClick={() => selectSortKey(key)}
             >
               <Icon className="h-3.5 w-3.5" />
-              {t(`provider.sortMode.${mode}`)}
+              {t(`provider.sortKey.${key}`)}
+              {sortKey === key && key !== "manual" && (
+                <span className="text-[10px] text-muted-foreground">
+                  {sortDirection === "asc" ? "↑" : "↓"}
+                </span>
+              )}
             </Button>
           ))}
         </div>
+        <div
+          ref={modelFilterWrapRef}
+          className="relative z-30 flex h-9 w-[14rem] shrink-0 items-center"
+        >
+          <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            value={searchTerm}
+            onChange={(e) => {
+              setSearchTerm(e.target.value);
+              setIsModelFilterMenuOpen(true);
+            }}
+            onFocus={() => setIsModelFilterMenuOpen(true)}
+            onClick={() => setIsModelFilterMenuOpen(true)}
+            placeholder={t("provider.filterInputPlaceholder", {
+              defaultValue: "筛选名称/服务商/网址",
+            })}
+            aria-label={t("provider.filterInputAriaLabel", {
+              defaultValue: "筛选供应商",
+            })}
+            aria-expanded={isModelFilterMenuOpen}
+            className="h-9 w-full rounded-md border-border/60 bg-background/70 pl-8 pr-8 text-xs"
+          />
+          {searchTerm.trim() && (
+            <button
+              type="button"
+              className="absolute right-1.5 inline-flex h-6 w-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+              title={t("common.clear", { defaultValue: "清除" })}
+              aria-label={t("common.clear", { defaultValue: "清除" })}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setSearchTerm("");
+                setIsModelFilterMenuOpen(true);
+              }}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {isModelFilterMenuOpen &&
+            modelFilterMenuPos &&
+            createPortal(
+              <div
+                id="provider-model-filter-menu"
+                className="fixed z-[200] rounded-md border border-border/70 bg-popover p-2 text-popover-foreground shadow-2xl"
+                style={{
+                  top: modelFilterMenuPos.top,
+                  left: modelFilterMenuPos.left,
+                  width: modelFilterMenuPos.width,
+                }}
+              >
+                <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
+                  <span className="text-[11px] font-medium text-muted-foreground">
+                    {t("provider.filterModelOptions", {
+                      defaultValue: "模型服务商",
+                    })}
+                  </span>
+                  <span className="text-[11px] text-muted-foreground">
+                    {visibleFilterBrands.length}
+                  </span>
+                </div>
+                {visibleFilterBrands.length === 0 ? (
+                  <div className="px-1 py-3 text-xs text-muted-foreground">
+                    {t("provider.filterModelOptionsEmpty", {
+                      defaultValue: "暂无探测到的模型服务商，请先一键拉取",
+                    })}
+                  </div>
+                ) : (
+                  <div className="grid max-h-64 grid-cols-6 gap-1.5 overflow-y-auto pr-0.5">
+                    {visibleFilterBrands.map((item) => {
+                      const activeKey = searchTerm.trim().toLowerCase();
+                      const active =
+                        activeKey === item.brand.toLowerCase() ||
+                        activeKey === item.label.toLowerCase();
+                      return (
+                        <button
+                          key={item.brand}
+                          type="button"
+                          title={`${item.label} · ${item.providerCount} 家供应商 · ${item.modelCount} 模型`}
+                          className={cn(
+                            "flex min-w-0 flex-col items-center gap-1 rounded-md border px-1 py-1.5 text-[10px] leading-tight transition-colors",
+                            active
+                              ? "border-primary/50 bg-primary/10 text-foreground"
+                              : "border-border/60 bg-background/60 text-muted-foreground hover:bg-muted hover:text-foreground",
+                          )}
+                          onClick={() => {
+                            setSearchTerm(item.label);
+                            setIsModelFilterMenuOpen(false);
+                          }}
+                        >
+                          <ProviderIcon
+                            icon={item.icon || undefined}
+                            name={item.label}
+                            color={item.iconColor}
+                            size={18}
+                            showFallback
+                          />
+                          <span className="w-full truncate text-center">
+                            {item.label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>,
+              document.body,
+            )}
+        </div>
+        <label
+          className="flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-border/60 bg-background/70 px-2.5 text-xs text-foreground/90"
+          title={t("provider.onlyAvailableHint", {
+            defaultValue: "仅显示模型拉取成功的供应商",
+          })}
+        >
+          <Checkbox
+            checked={onlyAvailable}
+            onCheckedChange={(checked) => {
+              const enabled = checked === true;
+              setOnlyAvailable(enabled);
+              if (enabled) {
+                setProbeStatusFilter("success");
+              } else if (probeStatusFilter === "success") {
+                setProbeStatusFilter("all");
+                setOnlyAvailable(false);
+              }
+            }}
+            aria-label={t("provider.onlyAvailable", {
+              defaultValue: "仅显示可用",
+            })}
+          />
+          <span className="whitespace-nowrap select-none">
+            {t("provider.onlyAvailable", { defaultValue: "仅显示可用" })}
+          </span>
+        </label>
         {toolbarActions && (
           <div
-            className="ml-auto flex shrink-0 items-center gap-1 border-l border-border/60 pl-2"
+            className="ml-auto flex h-9 shrink-0 items-center gap-1 border-l border-border/60 pl-2"
             role="toolbar"
             aria-label={t("common.actions", { defaultValue: "操作" })}
           >
@@ -982,7 +1424,7 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
         )}
         <div
           className={cn(
-            "flex shrink-0 items-center gap-1",
+            "flex h-9 shrink-0 items-center gap-1",
             !toolbarActions && "ml-auto",
           )}
         >
@@ -993,7 +1435,7 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
                 variant="ghost"
                 size="sm"
                 className={cn(
-                  "h-7 gap-1 px-2 text-xs",
+                  "h-9 gap-1 px-2.5 text-xs",
                   hasActiveFilters && "bg-background text-foreground shadow-sm",
                 )}
                 aria-label={t("provider.filterProviders", {
@@ -1036,7 +1478,10 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
                       size="sm"
                       variant={probeStatusFilter === value ? "default" : "outline"}
                       className="h-7 px-2 text-xs"
-                      onClick={() => setProbeStatusFilter(value)}
+                      onClick={() => {
+                        setProbeStatusFilter(value);
+                        setOnlyAvailable(value === "success");
+                      }}
                     >
                       {t(`provider.filterStatus.${value}`, {
                         defaultValue: label,
@@ -1068,6 +1513,7 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(fu
                   className="h-7 w-full text-xs"
                   onClick={() => {
                     setProbeStatusFilter("all");
+                setOnlyAvailable(false);
                     setModelFilter("");
                   }}
                 >
@@ -1390,3 +1836,17 @@ function SortableProviderCard({
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
