@@ -8,6 +8,7 @@ import {
   showFetchModelsError,
 } from "@/lib/api/model-fetch";
 import { resolveProviderModelsProbeTarget } from "@/utils/providerModelsProbe";
+import { pickBrandDiverseModelIds } from "@/utils/modelBrandIcon";
 
 export type ModelsProbeStatus =
   | "idle"
@@ -47,7 +48,7 @@ const CONCURRENCY = 4;
 const RESULT_TTL_MS = 60_000;
 const PROBE_HISTORY_STORAGE_PREFIX = "cc-switch-models-probe-history:v1:";
 /** Keep storage small while still feeding brand logos / filters. */
-const MAX_STORED_MODEL_IDS = 24;
+const MAX_STORED_MODEL_IDS = 80;
 
 const isCompletedProbeStatus = (
   status: unknown,
@@ -227,10 +228,14 @@ export function useFetchCurrentProviderModels(
             },
           };
         }
-        const modelIds = models
-          .map((model) => model.id)
-          .filter((id): id is string => typeof id === "string" && id.trim().length > 0)
-          .slice(0, MAX_STORED_MODEL_IDS);
+        const modelIds = pickBrandDiverseModelIds(
+          models
+            .map((model) => model.id)
+            .filter(
+              (id): id is string =>
+                typeof id === "string" && id.trim().length > 0,
+            ),
+        );
         return {
           id: provider.id,
           entry: {
@@ -696,3 +701,5 @@ export function useFetchCurrentProviderModels(
     probeHistoryById,
   };
 }
+
+

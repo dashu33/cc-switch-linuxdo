@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import type { CodexApiFormat, Provider } from "@/types";
 import type { ModelsProbeStatus } from "@/hooks/useFetchCurrentProviderModels";
 import type { ModelBrandIcon } from "@/utils/modelBrandIcon";
+import { pickBrandDiverseModelIds } from "@/utils/modelBrandIcon";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -257,10 +258,14 @@ export function CodexProviderQuickAdjust({
         provider.meta?.customUserAgent,
       );
       setFetchedModels(models);
-      const modelIds = models
-        .map((model) => model.id)
-        .filter((id): id is string => typeof id === "string" && id.trim().length > 0)
-        .slice(0, 24);
+      const modelIds = pickBrandDiverseModelIds(
+        models
+          .map((model) => model.id)
+          .filter(
+            (id): id is string =>
+              typeof id === "string" && id.trim().length > 0,
+          ),
+      );
       if (models.length === 0) {
         setFetchStatus("empty");
         onProbeResult?.({
@@ -504,3 +509,5 @@ export function CodexProviderQuickAdjust({
     </div>
   );
 }
+
+

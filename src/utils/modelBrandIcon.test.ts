@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   inferModelBrandIcon,
+  pickBrandDiverseModelIds,
   pickModelBrandIcons,
+  pickTopModelId,
   resolveTopModelForBrand,
 } from "./modelBrandIcon";
 
@@ -14,9 +16,12 @@ describe("modelBrandIcon", () => {
     expect(inferModelBrandIcon("grok-4.5")?.icon).toBe("grok");
     expect(inferModelBrandIcon("grok4.5")?.icon).toBe("grok");
     expect(inferModelBrandIcon("x-ai/grok-4.5-beta")?.icon).toBe("grok");
+    expect(inferModelBrandIcon("xai/grok-4")?.icon).toBe("grok");
+    expect(inferModelBrandIcon("xai-grok-3")?.icon).toBe("grok");
+    expect(inferModelBrandIcon("Grok-4")?.icon).toBe("grok");
   });
 
-  it("groups by brand without hard cap and keeps first as top model", () => {
+  it("groups by brand without hard cap and keeps top model by version", () => {
     const pack = pickModelBrandIcons([
       "gpt-4o",
       "gpt-4.1",
@@ -29,17 +34,37 @@ describe("modelBrandIcon", () => {
       "claude",
       "qwen",
     ]);
-    expect(pack.icons[0]?.modelId).toBe("gpt-4o");
+    // Prefer higher version among openai ids
+    expect(pack.icons[0]?.modelId).toBe("gpt-4.1");
     expect(pack.icons[0]?.modelIds).toEqual(["gpt-4o", "gpt-4.1"]);
     expect(pack.overflow).toBe(0);
   });
 
-  it("resolves top model for a brand from probe order", () => {
+  it("prefers non-lite top models when versions are close", () => {
+    expect(
+      pickTopModelId(["grok-4-mini", "grok-4", "grok-3"]),
+    ).toBe("grok-4");
     expect(
       resolveTopModelForBrand(
-        ["claude-haiku", "gpt-4o", "claude-sonnet"],
+        ["claude-haiku-4", "claude-sonnet-4", "claude-opus-4"],
         "claude",
       ),
-    ).toBe("claude-haiku");
+    ).toBe("claude-opus-4");
+  });
+
+  it("keeps brand diversity when sampling model ids", () => {
+    const many = [
+      ...Array.from({ length: 30 }, (_, i) => `gpt-extra-${i}`),
+      "claude-sonnet-4",
+      "grok-4",
+      "qwen-max",
+    ];
+    const sampled = pickBrandDiverseModelIds(many, 10);
+    expect(sampled).toContain("gpt-extra-0");
+    expect(sampled).toContain("claude-sonnet-4");
+    expect(sampled).toContain("grok-4");
+    expect(sampled).toContain("qwen-max");
+    expect(sampled.length).toBe(10);
   });
 });
+
