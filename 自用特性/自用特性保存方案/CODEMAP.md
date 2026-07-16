@@ -102,8 +102,9 @@ Get-ChildItem 自用特性 -Recurse -File |
 ### 本机替换命令示例
 
 ```powershell
-# 1) 构建
+# 1) 构建（以 exe 为准；MSI bundle 失败可忽略）
 pnpm tauri build
+# 若只想尽量出 exe、减少安装器步骤干扰，也可在确认 target/release/cc-switch.exe 已更新后直接替换
 
 # 2) 关闭运行中的应用
 Get-Process -Name "cc-switch" -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -111,7 +112,9 @@ Get-Process -Name "cc-switch" -ErrorAction SilentlyContinue | Stop-Process -Forc
 # 3) 替换安装版
 $built = "D:\\CCSWITCH\\src-tauri\\target\\release\\cc-switch.exe"
 $installed = "$env:LOCALAPPDATA\\Programs\\CC Switch\\cc-switch.exe"
+if (-not (Test-Path $built)) { throw "built exe missing: $built" }
 Copy-Item -LiteralPath $built -Destination $installed -Force
+(Get-FileHash $built).Hash; (Get-FileHash $installed).Hash
 
 # 4) 可选启动
 Start-Process -FilePath $installed

@@ -67,12 +67,14 @@
    - **取消** 全量 `Release` 工作流（`release.yml` 会匹配 `v*`，需手动 cancel，避免走 Apple 签名多平台）。
    - 发布页产物至少包含 Windows 安装包/绿色包 + macOS unsigned 包。
 3. **本机编译 exe 并替换已安装版本**
-   - 在本机执行 Windows release 构建（默认 `pnpm tauri build`，产物通常为 `src-tauri/target/release/cc-switch.exe`）。
+   - 在本机执行 Windows release 构建（默认 `pnpm tauri build`）。
+   - **本机成功标准是 exe**：`src-tauri/target/release/cc-switch.exe` 已生成即可。
+   - MSI/NSIS 打包失败（如本机 WiX `light.exe` 报错）**不阻断**本机发布；远端 personal 工作流会出安装包。
    - 关闭正在运行的 CC Switch。
    - 用新 exe **替换** 本机安装目录中的运行文件：
      - 默认路径：`%LOCALAPPDATA%\\Programs\\CC Switch\\cc-switch.exe`
      - 当前机器实测：`C:\\Users\\83408\\AppData\\Local\\Programs\\CC Switch\\cc-switch.exe`
-   - 替换后可启动验证关键路径。
+   - 替换后启动验证关键路径；可用文件时间/哈希确认已替换。
 4. **收尾**
    - 回传：分支、tag、Release URL、本机替换结果。
    - 若行为/文档变化，同一任务内更新对应 `自用特性/` 文档。

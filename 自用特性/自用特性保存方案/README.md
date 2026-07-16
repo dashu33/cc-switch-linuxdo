@@ -161,7 +161,7 @@ src/...                              # 唯一生产实现
    - macOS **无签名** personal release
    - 取消误触发的全量签名 `Release`
 3. **本机编译 exe 并替换已安装版本**
-   - 构建：`pnpm tauri build`
+   - 构建：`pnpm tauri build`（以 exe 生成为准；本机 MSI 失败可忽略）
    - 替换：`%LOCALAPPDATA%\\Programs\\CC Switch\\cc-switch.exe`
 4. **回报** tag、Release 链接、本机替换结果
 
