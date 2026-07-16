@@ -136,6 +136,7 @@ src/...                              # 唯一生产实现
 - [x] 总索引包含本方案，并写明升级/回退流程。
 - [ ] 后续新特性提交持续使用 `feat|fix|docs(自用/<特性名>)` 前缀。
 - [ ] 若启用 `patches/`，导出命令与基线记录在当时的发布说明或本方案补充段。
+- [x] 「发布」定义写入 AGENTS + 本方案：远端 personal 包 + 本机 exe 替换。
 
 ## 迁移说明
 
@@ -149,3 +150,19 @@ src/...                              # 唯一生产实现
 - [代码地图](./CODEMAP.md)
 - [自用特性总索引](../README.md)
 - 根约束：`AGENTS.md`
+## 自用「发布」定义
+
+当用户说 **发布** 时，默认包含以下完整闭环（详见根目录 `AGENTS.md`）：
+
+1. **推到 GitHub 自用分支**（按特性提交后 push）
+2. **远端编译 / 发布**
+   - tag：`v*-personal*`
+   - Windows personal release
+   - macOS **无签名** personal release
+   - 取消误触发的全量签名 `Release`
+3. **本机编译 exe 并替换已安装版本**
+   - 构建：`pnpm tauri build`
+   - 替换：`%LOCALAPPDATA%\\Programs\\CC Switch\\cc-switch.exe`
+4. **回报** tag、Release 链接、本机替换结果
+
+> 「发布」≠ 只 push / 只打 tag / 只跑 CI。调试运行（`pnpm dev`）不叫发布。

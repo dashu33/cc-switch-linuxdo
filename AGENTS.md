@@ -50,6 +50,58 @@
 6. 若行为、路径或符号变化，同一任务内更新 README、CODEMAP 与总索引。
 7. 如使用 `patches/`，升级完成后按需重导。
 
+## 自用「发布」定义（强制）
+
+当用户说 **发布**、**编译发布**、**出包** 或同义指令时，默认指完整自用发布闭环，**不是**只打 GitHub Release。
+
+### 发布包含的动作（按顺序）
+
+1. **落盘与推送分支**
+   - 相关改动已按特性拆分提交。
+   - 推送到 GitHub 自用分支仓库（当前常见：`origin` = `dashu33/cc-switch`，开发分支如 `codex/*`）。
+2. **远端编译 + 发布资产**
+   - 打自用 tag：`v*-personal*`（例：`v3.17.1-personal.7`）。
+   - 触发并等待：
+     - `Personal Windows Release`（Windows x64）
+     - `Personal macOS Release (unsigned)`（macOS **无签名 / ad-hoc**）
+   - **取消** 全量 `Release` 工作流（`release.yml` 会匹配 `v*`，需手动 cancel，避免走 Apple 签名多平台）。
+   - 发布页产物至少包含 Windows 安装包/绿色包 + macOS unsigned 包。
+3. **本机编译 exe 并替换已安装版本**
+   - 在本机执行 Windows release 构建（默认 `pnpm tauri build`，产物通常为 `src-tauri/target/release/cc-switch.exe`）。
+   - 关闭正在运行的 CC Switch。
+   - 用新 exe **替换** 本机安装目录中的运行文件：
+     - 默认路径：`%LOCALAPPDATA%\\Programs\\CC Switch\\cc-switch.exe`
+     - 当前机器实测：`C:\\Users\\83408\\AppData\\Local\\Programs\\CC Switch\\cc-switch.exe`
+   - 替换后可启动验证关键路径。
+4. **收尾**
+   - 回传：分支、tag、Release URL、本机替换结果。
+   - 若行为/文档变化，同一任务内更新对应 `自用特性/` 文档。
+
+### 发布范围默认值
+
+| 目标 | 默认 |
+|---|---|
+| GitHub 远端 | 只发自用 personal 工作流：Windows + macOS **无签名** |
+| 全量签名多平台 `Release` | **不发**；若被 tag 误触发则立即 cancel |
+| 本机 | Windows exe 编译并替换已安装版 |
+| Linux / 已签名 mac | 非默认；用户明确要求才做 |
+
+### 发布完成判定
+
+- [ ] 分支已 push 到 GitHub
+- [ ] personal tag 已 push
+- [ ] Personal Windows 成功，资产已挂到 Release
+- [ ] Personal macOS unsigned 成功，资产已挂到 Release
+- [ ] 全量 `Release` 未运行或已取消
+- [ ] 本机 `cc-switch.exe` 已用新构建替换安装目录文件
+- [ ] 相关自用特性文档如需同步已更新
+
+### 非目标
+
+- 「发布」不等于只 push 代码、不等于只跑 CI、不等于只打 tag。
+- 开发调试可用 `pnpm dev` / `pnpm dev:renderer`；**不叫发布**。
+- 未要求时不要触发需要 Apple 证书/公证的正式 mac 签名流程。
+
 ## 完成前检查
 
 1. 确认相关中文特性目录存在且名称稳定。
@@ -59,3 +111,4 @@
 5. 确认相关提交按特性拆分，未把无关改动混进同一提交（若本任务产生提交）。
 6. 运行与风险相称的测试，并把特殊环境限制记录到特性 README。
 7. 若导出了 `patches/`，确认其只作备份且不与生产实现双写。
+8. 若本任务是「发布」，按上方「自用发布定义」完成远端资产 + 本机替换，不得只完成其中一半。

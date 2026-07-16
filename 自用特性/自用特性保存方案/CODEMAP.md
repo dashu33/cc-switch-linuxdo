@@ -86,3 +86,33 @@ Get-ChildItem 自用特性 -Recurse -File |
 - 本方案约束所有自用特性目录的维护方式。
 - 不改变任何业务特性的运行时行为。
 - 业务特性的实现仍以各自 CODEMAP 指向的生产文件为准。
+## 自用发布落点
+
+| 项 | 路径 / 命令 |
+|---|---|
+| 约束定义 | 根目录 `AGENTS.md` →「自用发布定义」 |
+| Windows personal 工作流 | `.github/workflows/release-personal-windows.yml` |
+| macOS 无签名工作流 | `.github/workflows/release-personal-macos.yml` |
+| 全量签名工作流（需 cancel） | `.github/workflows/release.yml` |
+| 本机构建 | `pnpm tauri build` → 通常 `src-tauri/target/release/cc-switch.exe` |
+| 本机安装路径（替换目标） | `%LOCALAPPDATA%\\Programs\\CC Switch\\cc-switch.exe` |
+| 当前机器绝对路径 | `C:\\Users\\83408\\AppData\\Local\\Programs\\CC Switch\\cc-switch.exe` |
+| tag 约定 | `v*-personal*`（例 `v3.17.1-personal.7`） |
+
+### 本机替换命令示例
+
+```powershell
+# 1) 构建
+pnpm tauri build
+
+# 2) 关闭运行中的应用
+Get-Process -Name "cc-switch" -ErrorAction SilentlyContinue | Stop-Process -Force
+
+# 3) 替换安装版
+$built = "D:\\CCSWITCH\\src-tauri\\target\\release\\cc-switch.exe"
+$installed = "$env:LOCALAPPDATA\\Programs\\CC Switch\\cc-switch.exe"
+Copy-Item -LiteralPath $built -Destination $installed -Force
+
+# 4) 可选启动
+Start-Process -FilePath $installed
+```
