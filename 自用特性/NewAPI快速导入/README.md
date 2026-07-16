@@ -164,3 +164,19 @@ pnpm exec vitest run src/utils/parseNewApiClipboard.test.ts
 - 与新建/复制同一路径：静默 `probeProviders`，延迟约 400ms 后静默探测一次。
 - 探测结果进入可用性排序与状态图标，不自动改写供应商默认模型配置。
 
+
+## 增量：Key 中文噪声清洗
+
+支持分享文案把说明文字嵌进 key 的场景：
+
+```text
+base url：https://welfare.0xpsyche.me/v1
+key：删掉中文！！！
+sk-5d80删7485003掉463577653d中9122445fc162fb7文b8c35928d966
+```
+
+规则：
+- 标签行若是纯中文说明（如 `key：删掉中文！！！`）→ **忽略**，继续扫后面真正的 key
+- `sk-` 中间夹中文/全角标点 → 自动剔除后拼接
+- 标签后同一行就是带噪声的 sk key → 同样清洗
+

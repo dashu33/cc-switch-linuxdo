@@ -233,4 +233,34 @@ KEY=sk-jf0w8ej7nj3qk2yt删除我fzsujejkuwegtqe`;
     });
   });
 
+  it("parses Chinese instruction line then noisy sk key on next line", () => {
+    const text = `base url：https://welfare.0xpsyche.me/v1
+key：删掉中文！！！
+sk-5d80删7485003掉463577653d中9122445fc162fb7文b8c35928d966`;
+    expect(parseNewApiClipboard(text)).toEqual({
+      baseUrl: "https://welfare.0xpsyche.me/v1",
+      apiKey: "sk-5d807485003463577653d9122445fc162fb7b8c35928d966",
+    });
+  });
+
+  it("parses markdown url + Chinese instruction + noisy sk key", () => {
+    const text = `base url：[https://welfare.0xpsyche.me/v1](https://welfare.0xpsyche.me/v1)
+key：删掉中文！！！
+sk-5d80删7485003掉463577653d中9122445fc162fb7文b8c35928d966`;
+    expect(parseNewApiClipboard(text)).toEqual({
+      baseUrl: "https://welfare.0xpsyche.me/v1",
+      apiKey: "sk-5d807485003463577653d9122445fc162fb7b8c35928d966",
+    });
+  });
+
+  it("parses labeled key that itself contains chinese noise", () => {
+    const text = `URL: https://welfare.0xpsyche.me/v1
+KEY: sk-5d80删7485003掉463577653d中9122445fc162fb7文b8c35928d966`;
+    expect(parseNewApiClipboard(text)).toEqual({
+      baseUrl: "https://welfare.0xpsyche.me/v1",
+      apiKey: "sk-5d807485003463577653d9122445fc162fb7b8c35928d966",
+    });
+  });
+
+
 });

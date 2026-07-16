@@ -194,6 +194,50 @@ function looksLikeBase64Blob(value: string): boolean {
   return true;
 }
 
+/**
+ * Recover an sk- key even when Chinese / fullwidth noise is glued inside.
+ * Example: sk-5d80删7485...文b8c3 -> sk-5d807485...b8c3
+ */
+function recoverSkKeyFromNoise(value: string): string | null {
+  const raw = cleanToken(value);
+  if (!raw) return null;
+
+  const direct = sanitizeApiKeyCandidate(raw);
+  if (looksLikeSkKey(direct)) return direct;
+
+  // Capture sk-... until whitespace / common separators, then strip CJK.
+  const gluedMatch = raw.match(/\bsk-[^\s"'\`,;]+/i);
+  if (gluedMatch?.[0]) {
+    const cleaned = sanitizeApiKeyCandidate(gluedMatch[0]);
+    if (looksLikeSkKey(cleaned)) return cleaned;
+  }
+
+  const stripped = stripCjkNoise(raw);
+  const m = stripped.match(/\b(sk-[A-Za-z0-9._\-]{8,})\b/i);
+  if (m?.[1] && looksLikeSkKey(m[1])) return m[1];
+  return null;
+}
+
+/**
+ * Normalize a labeled / free-text key candidate into a usable secret, or null.
+ * Rejects pure Chinese instruction lines like "删掉中文！！！".
+ */
+function resolveApiKeyCandidate(value: string): string | null {
+  const raw = cleanToken(value);
+  if (!raw) return null;
+
+  const recovered = recoverSkKeyFromNoise(raw);
+  if (recovered) return recovered;
+
+  const cleaned = sanitizeApiKeyCandidate(raw);
+  if (!cleaned || cleaned.length < 8) return null;
+  if (looksLikeSkKey(cleaned)) return cleaned;
+  if (looksLikeSecretToken(cleaned)) return cleaned;
+  if (looksLikePlainApiKey(cleaned)) return cleaned;
+  if (looksLikeBase64Blob(cleaned)) return cleaned;
+  return null;
+}
+
 function tryDecodeBase64Candidate(value: string): string | null {
   const cleaned = value.trim().replace(/\s+/g, "");
   if (!looksLikeBase64Blob(cleaned)) return null;
@@ -566,6 +610,8 @@ function extractQueryKey(url: string): string | null {
 }
 
 function decodeApiKeyIfNeeded(apiKey: string): string {
+  const recovered = recoverSkKeyFromNoise(apiKey);
+  if (recovered) return recovered;
   const trimmed = sanitizeApiKeyCandidate(apiKey);
   if (looksLikeSkKey(trimmed)) return trimmed;
 
@@ -638,8 +684,11 @@ function parseOnce(text: string): Partial<ParsedNewApiCredentials> {
 
   const labeledKey = firstMatch(LABELED_KEY_RE, text);
   if (labeledKey) {
-    // Labeled values may still be base64 — keep raw; final decode happens later.
-    result.apiKey ||= stripMarkdownWrapper(labeledKey);
+    // Reject pure Chinese instruction lines (e.g. key：删掉中文！！！).
+    const resolved = resolveApiKeyCandidate(stripMarkdownWrapper(labeledKey));
+    if (resolved) {
+      result.apiKey ||= resolved;
+    }
   }
 
   const labeledName = firstMatch(LABELED_NAME_RE, text);
@@ -705,17 +754,26 @@ function parseOnce(text: string): Partial<ParsedNewApiCredentials> {
       }
       const lineKeyLabeled = firstMatch(LABELED_KEY_RE, line);
       if (!result.apiKey && lineKeyLabeled) {
-        result.apiKey = stripMarkdownWrapper(lineKeyLabeled);
-        continue;
+        const resolved = resolveApiKeyCandidate(
+          stripMarkdownWrapper(lineKeyLabeled),
+        );
+        if (resolved) {
+          result.apiKey = resolved;
+          continue;
+        }
+        // Labeled value was noise; keep scanning following lines for sk- key.
       }
 
       if (!result.baseUrl && looksLikeUrl(line)) {
         result.baseUrl = normalizeBaseUrl(line);
         continue;
       }
-      if (!result.apiKey && looksLikeSkKey(line)) {
-        result.apiKey = line;
-        continue;
+      if (!result.apiKey) {
+        const recovered = recoverSkKeyFromNoise(line);
+        if (recovered) {
+          result.apiKey = recovered;
+          continue;
+        }
       }
       if (!result.apiKey) {
         const decodedKeys = collectDecodedBase64Keys(line);
@@ -773,9 +831,15 @@ export function parseNewApiClipboardPartial(
 
   if (!best.baseUrl && !best.apiKey) return null;
 
+  let apiKey: string | undefined;
+  if (best.apiKey) {
+    const decoded = decodeApiKeyIfNeeded(best.apiKey);
+    apiKey = resolveApiKeyCandidate(decoded) ?? undefined;
+  }
+
   return {
     baseUrl: best.baseUrl ? normalizeBaseUrl(best.baseUrl) : undefined,
-    apiKey: best.apiKey ? decodeApiKeyIfNeeded(best.apiKey) : undefined,
+    apiKey: apiKey || undefined,
     name: best.name?.trim() || undefined,
   };
 }
