@@ -177,3 +177,5 @@ meta.apiFormat = "openai_responses" // 若源不是 openai_chat/responses
 
 - Grok Build 校验需要完整 TOML 字段；复制时不能只写空对象，否则会提示“缺少字段”。
 - 默认 `api_backend=responses`，`context_window=500000`。
+- Base URL 与 Codex 同语义：`normalizeCodexBaseUrl`，纯 origin 会补 `/v1`（因为 Grok 客户端会拼 `{base_url}/responses`）。
+- 例：Claude 源 `https://api.example.com` → Grok `https://api.example.com/v1`；Codex 源已有 `/v1` 则原样保留。

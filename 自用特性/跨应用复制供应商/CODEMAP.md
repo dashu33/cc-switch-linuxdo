@@ -57,12 +57,13 @@ generateUniqueProviderKey(preferred, existingKeys)
 useCopyProviderToApp(sourceApp): (provider, targetApp) => Promise<void>
 ```
 
-## Codex ↔ Claude 转换要点
+## Codex ↔ Claude / Grok 转换要点
 
 | 方向 | Base URL | settingsConfig | meta |
 |------|----------|----------------|------|
 | Claude → Codex | 补 `/v1`（origin-only） | `auth` + TOML `config` | 去掉 authBinding / oauth providerType |
 | Codex → Claude | 去尾部 `/v1` | Anthropic env | **强制** `apiFormat: "anthropic"` |
+| * → Grok Build | 补 `/v1`（origin-only，复用 `normalizeCodexBaseUrl`） | Grok TOML `config` | 非 chat/responses 时回落 `openai_responses` |
 
 ## UI 接线检查
 
@@ -81,6 +82,7 @@ rg -n "onCopyToApp|useCopyProviderToApp|getCopyTargetApps|convertProviderToApp" 
 - [ ] Codex 卡片右键 → 复制到 Claude → 目标列表出现同名供应商
 - [ ] Claude → Codex：base_url 含 `/v1`，auth 有 OPENAI_API_KEY
 - [ ] Codex → Claude：BASE_URL 无尾部 `/v1`，`meta.apiFormat === anthropic`
+- [ ] Claude/Codex → Grok：origin-only 补 `/v1`；已有 `/v1` 保留；`api_backend=responses`
 - [ ] 隐藏的 App 不出现在「复制到…」子菜单
 - [ ] OpenCode/OpenClaw/Hermes：key 冲突时生成 `-copy`，且未自动 addToLive
 - [ ] official 源复制后目标 category 为 third_party

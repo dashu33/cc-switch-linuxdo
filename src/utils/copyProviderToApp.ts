@@ -342,12 +342,15 @@ function buildSettingsConfig(
   if (targetApp === "grokbuild") {
     // Grok Build stores a provider-owned TOML document under settingsConfig.config.
     // Required fields: [models].default, [model.<profile>].{model,base_url,name,api_key|env_key,api_backend,context_window}
+    // Same OpenAI-compatible base_url semantics as Codex: origin-only hosts need /v1
+    // because the client appends /responses (or /chat/completions) itself.
     const profile = model || GROK_BUILD_DEFAULT_MODEL;
+    const grokBase = normalizeCodexBaseUrl(baseUrl);
     return {
       config: buildGrokBuildConfig({
         model: profile,
         upstreamModel: profile,
-        baseUrl,
+        baseUrl: grokBase || baseUrl,
         name: displayName || profile,
         apiKey,
         apiBackend: GROK_BUILD_DEFAULT_API_BACKEND,

@@ -220,7 +220,7 @@ wire_api = "responses"
     const configText = String(result.settingsConfig.config);
     expect(configText).toContain('[models]');
     expect(configText).toContain('default = "claude-sonnet-4-20250514"');
-    expect(configText).toContain('base_url = "https://api.example.com"');
+    expect(configText).toContain('base_url = "https://api.example.com/v1"');
     expect(configText).toContain('api_key = "sk-test-key"');
     expect(configText).toContain('name = "Grok Gateway"');
     expect(configText).toContain('api_backend = "responses"');
@@ -251,6 +251,54 @@ context_window = 500000
       apiKey: "sk-grok",
       model: "grok-4.5",
     });
+  });
+
+  it("converts Codex provider into Grok Build with /v1 base_url", () => {
+    const source: Provider = {
+      id: "codex-1",
+      name: "Codex Proxy",
+      settingsConfig: {
+        auth: { OPENAI_API_KEY: "sk-codex" },
+        config: `model_provider = "custom"
+model = "gpt-5.5"
+
+[model_providers.custom]
+name = "custom"
+base_url = "https://codex.example.com/v1"
+wire_api = "responses"
+`,
+      },
+      meta: {
+        apiFormat: "openai_responses",
+      },
+    };
+
+    const result = convertProviderToApp(source, "codex", "grokbuild");
+    const configText = String(result.settingsConfig.config);
+
+    expect(configText).toContain('base_url = "https://codex.example.com/v1"');
+    expect(configText).toContain('api_backend = "responses"');
+    expect(configText).toContain('api_key = "sk-codex"');
+    expect(result.meta?.apiFormat).toBe("openai_responses");
+  });
+
+  it("pads origin-only base_url with /v1 when copying into Grok Build", () => {
+    const source = makeClaudeProvider({
+      name: "Origin Only Gateway",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://gateway.example.com",
+          ANTHROPIC_AUTH_TOKEN: "sk-origin",
+          ANTHROPIC_MODEL: "gpt-5.5",
+        },
+      },
+    });
+
+    const result = convertProviderToApp(source, "claude", "grokbuild");
+    const configText = String(result.settingsConfig.config);
+
+    expect(configText).toContain('base_url = "https://gateway.example.com/v1"');
+    expect(configText).toContain('api_backend = "responses"');
   });
 
   it("rejects same-app conversion", () => {
