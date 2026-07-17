@@ -111,7 +111,44 @@ jobs:
           fi
           echo "✅ Tauri updater signing key prepared (Apple code-sign intentionally ad-hoc)"
 
+      - name: Stamp personal version from tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          if [[ "$TAG" != v* ]]; then
+            echo "Skipping version stamp for non-tag ref: $TAG"
+            exit 0
+          fi
+          VERSION="${TAG#v}"
+          echo "Stamping app version to: $VERSION"
+          export VERSION
+          node <<'NODE'
+          const fs = require("fs");
+          const version = process.env.VERSION;
+          if (!version) {
+            console.error("VERSION env is empty");
+            process.exit(1);
+          }
+          for (const f of ["package.json", "src-tauri/tauri.conf.json"]) {
+            const j = JSON.parse(fs.readFileSync(f, "utf8"));
+            j.version = version;
+            fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\n");
+          }
+          let cargo = fs.readFileSync("src-tauri/Cargo.toml", "utf8");
+          cargo = cargo.replace(/^version\s*=\s*"[^"]+"/m, `version = "${version}"`);
+          fs.writeFileSync("src-tauri/Cargo.toml", cargo);
+          console.log("package.json:", JSON.parse(fs.readFileSync("package.json", "utf8")).version);
+          console.log("tauri.conf.json:", JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8")).version);
+          NODE
+
+
       - name: Build Tauri App (macOS universal, unsigned)
+
         shell: bash
         env:
           # Ad-hoc Apple code-sign only. Do NOT set APPLE_ID / APPLE_PASSWORD /
@@ -282,9 +319,9 @@ jobs:
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$TAG" \
               --repo "$GITHUB_REPOSITORY" \
-              --prerelease \
+              --latest \
               --title "CC Switch ${TAG} (personal)" \
-              --notes "Personal prerelease (Windows + unsigned macOS). See 自用特性/发布说明-v3.17.1-自用版.md."
+              --notes "Personal latest (Windows + unsigned macOS). See 自用特性/发布说明-v3.17.1-自用版.md."
           fi
           gh release upload "$TAG" release-assets/* --clobber --repo "$GITHUB_REPOSITORY"
           echo "✅ Uploaded unsigned macOS assets to release $TAG"

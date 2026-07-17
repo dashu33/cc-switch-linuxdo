@@ -96,7 +96,36 @@ jobs:
           fi
           echo "✅ Tauri signing key prepared"
 
+      - name: Stamp personal version from tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "Stamping app version to: $VERSION"
+          export VERSION
+          node <<'NODE'
+          const fs = require("fs");
+          const version = process.env.VERSION;
+          if (!version) {
+            console.error("VERSION env is empty");
+            process.exit(1);
+          }
+          for (const f of ["package.json", "src-tauri/tauri.conf.json"]) {
+            const j = JSON.parse(fs.readFileSync(f, "utf8"));
+            j.version = version;
+            fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\n");
+          }
+          let cargo = fs.readFileSync("src-tauri/Cargo.toml", "utf8");
+          cargo = cargo.replace(/^version\s*=\s*"[^"]+"/m, `version = "${version}"`);
+          fs.writeFileSync("src-tauri/Cargo.toml", cargo);
+          console.log("package.json:", JSON.parse(fs.readFileSync("package.json", "utf8")).version);
+          console.log("tauri.conf.json:", JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8")).version);
+          NODE
+
+
       - name: Build Tauri App (Windows x64)
+
         shell: pwsh
         run: pnpm tauri build
 
@@ -189,11 +218,12 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: CC Switch ${{ github.ref_name }} (personal)
-          prerelease: true
+          prerelease: false
+          make_latest: true
           body: |
             ## CC Switch ${{ github.ref_name }} · 自用分支
 
-            基于 `codex/personal-provider-ux` 的个人增强包（Windows x64）。
+            基于自用主线 `main` 的个人增强包（Windows x64）。
 
             ### 下载
             - **Windows 安装包**: `CC-Switch-${{ github.ref_name }}-Windows.msi`
@@ -209,7 +239,7 @@ jobs:
             - 新建默认 `openai_chat`（Chat Completions 需路由）
             - `自用特性/` 文档已随代码上传，便于对齐主程序
 
-            > 本 Release 为自用 prerelease；macOS/Linux 多平台请走完整 `release.yml`（需 Apple 签名等密钥）。
+            > 本 Release 为自用 latest（dashu33/cc-switch / main），供应用内检查更新使用；完整上游签名多平台请走 `release.yml`。
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
