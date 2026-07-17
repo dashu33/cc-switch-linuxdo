@@ -8,8 +8,11 @@ use super::{
     handler_config::{StreamUsageEventFilter, UsageParserConfig},
     handler_context::{RequestContext, StreamingTimeoutConfig},
     hyper_client::ProxyResponse,
+    providers::transform_codex_chat::{
+        ensure_responses_payload_usage, ensure_responses_usage_shape,
+    },
     server::ProxyState,
-    sse::{strip_sse_field, take_sse_block},
+    sse::{append_utf8_safe, strip_sse_field, take_sse_block},
     usage::parser::TokenUsage,
     ProxyError,
 };
@@ -185,6 +188,16 @@ pub async fn handle_streaming(
     // 获取流式超时配置
     let timeout_config = ctx.streaming_timeout_config();
 
+    // Grok Build (and some Codex builds) require nested usage details on every
+    // Responses payload. Normalize only those app types so other clients stay
+    // zero-copy on the hot path.
+    let stream: futures::stream::BoxStream<'static, Result<Bytes, reqwest::Error>> =
+        if needs_responses_usage_shape(ctx.app_type_str) {
+            Box::pin(create_responses_usage_normalized_stream(stream))
+        } else {
+            Box::pin(stream)
+        };
+
     // 创建带日志和超时的透传流
     let logged_stream = create_logged_passthrough_stream(
         stream,
@@ -230,10 +243,25 @@ pub async fn handle_non_streaming(
         String::from_utf8_lossy(&body_bytes)
     );
 
-    // 解析并记录使用量。关闭 usage logging 时直接跳过，避免非流式响应整包 JSON parse。
-    if usage_logging_enabled(state) {
-        if let Ok(json_value) = serde_json::from_slice::<Value>(&body_bytes) {
-            // 解析使用量
+    let mut body_bytes = body_bytes;
+    let parsed_json = if needs_responses_usage_shape(ctx.app_type_str) || usage_logging_enabled(state)
+    {
+        serde_json::from_slice::<Value>(&body_bytes).ok()
+    } else {
+        None
+    };
+
+    if let Some(mut json_value) = parsed_json {
+        if needs_responses_usage_shape(ctx.app_type_str) {
+            ensure_responses_payload_usage(&mut json_value);
+            if let Ok(normalized) = serde_json::to_vec(&json_value) {
+                body_bytes = Bytes::from(normalized);
+                strip_entity_headers_for_rebuilt_body(&mut response_headers);
+            }
+        }
+
+        // 解析并记录使用量。关闭 usage logging 时直接跳过，避免非流式响应整包 JSON parse。
+        if usage_logging_enabled(state) {
             if let Some(usage) = (parser_config.response_parser)(&json_value) {
                 // 归因优先级：usage 解析出的模型 → 响应 model 字段 → 映射后的出站
                 // 模型（路由接管真值）→ 客户端请求模型。空字符串视为缺失。
@@ -282,22 +310,22 @@ pub async fn handle_non_streaming(
                     parser_config.app_type_str
                 );
             }
-        } else {
-            log::debug!(
-                "[{}] <<< 响应 (非 JSON): {} bytes",
-                ctx.tag,
-                body_bytes.len()
-            );
-            spawn_log_usage(
-                state,
-                ctx,
-                TokenUsage::default(),
-                ctx.outbound_model.as_deref().unwrap_or(&ctx.request_model),
-                &ctx.request_model,
-                status.as_u16(),
-                false,
-            );
         }
+    } else if usage_logging_enabled(state) {
+        log::debug!(
+            "[{}] <<< 响应 (非 JSON): {} bytes",
+            ctx.tag,
+            body_bytes.len()
+        );
+        spawn_log_usage(
+            state,
+            ctx,
+            TokenUsage::default(),
+            ctx.outbound_model.as_deref().unwrap_or(&ctx.request_model),
+            &ctx.request_model,
+            status.as_u16(),
+            false,
+        );
     } else {
         log::debug!("[{}] usage logging 已关闭，跳过非流式 usage 解析", ctx.tag);
     }
@@ -330,6 +358,116 @@ pub async fn process_response(
     } else {
         handle_non_streaming(response, ctx, state, parser_config, connection_guard).await
     }
+}
+
+
+fn needs_responses_usage_shape(app_type_str: &str) -> bool {
+    matches!(app_type_str, "codex" | "grokbuild")
+}
+
+fn rewrite_responses_sse_block_usage(block: &str) -> Option<String> {
+    let mut event_name: Option<String> = None;
+    let mut data_lines: Vec<String> = Vec::new();
+    let mut other_lines: Vec<String> = Vec::new();
+
+    for line in block.lines() {
+        if let Some(name) = strip_sse_field(line, "event") {
+            event_name = Some(name.to_string());
+            other_lines.push(line.to_string());
+            continue;
+        }
+        if let Some(data) = strip_sse_field(line, "data") {
+            data_lines.push(data.to_string());
+            continue;
+        }
+        other_lines.push(line.to_string());
+    }
+
+    if data_lines.is_empty() {
+        return None;
+    }
+
+    let data = data_lines.join("\n");
+    if data.trim() == "[DONE]" {
+        return None;
+    }
+
+    let mut payload: Value = serde_json::from_str(&data).ok()?;
+    let before = payload.clone();
+    ensure_responses_payload_usage(&mut payload);
+    if payload == before {
+        return None;
+    }
+
+    let rewritten_data = serde_json::to_string(&payload).ok()?;
+    let mut out = String::with_capacity(block.len() + 64);
+    for line in other_lines {
+        out.push_str(&line);
+        out.push('\n');
+    }
+    if event_name.is_some() && !other_lines.iter().any(|l| l.starts_with("event:") || l.starts_with("event: ")) {
+        // event already preserved via other_lines when present.
+    }
+    out.push_str("data: ");
+    out.push_str(&rewritten_data);
+    out.push_str("\n\n");
+    Some(out)
+}
+
+fn create_responses_usage_normalized_stream<S, E>(
+    stream: S,
+) -> impl Stream<Item = Result<Bytes, E>> + Send
+where
+    S: Stream<Item = Result<Bytes, E>> + Send + 'static,
+    E: Send + 'static,
+{
+    async_stream::stream! {
+        let mut buffer = String::new();
+        let mut utf8_remainder = Vec::new();
+        tokio::pin!(stream);
+
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(bytes) => {
+                    append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
+                    let mut out = String::new();
+                    while let Some(event_text) = take_sse_block(&mut buffer) {
+                        if let Some(rewritten) = rewrite_responses_sse_block_usage(&event_text) {
+                            out.push_str(&rewritten);
+                        } else {
+                            out.push_str(&event_text);
+                            out.push_str("\n\n");
+                        }
+                    }
+                    if !out.is_empty() {
+                        yield Ok(Bytes::from(out));
+                    }
+                }
+                Err(err) => {
+                    yield Err(err);
+                    return;
+                }
+            }
+        }
+
+        if !utf8_remainder.is_empty() {
+            buffer.push_str(&String::from_utf8_lossy(&utf8_remainder));
+            utf8_remainder.clear();
+        }
+        if !buffer.is_empty() {
+            if let Some(rewritten) = rewrite_responses_sse_block_usage(buffer.trim_end()) {
+                yield Ok(Bytes::from(rewritten));
+            } else {
+                yield Ok(Bytes::from(buffer));
+            }
+        }
+    }
+}
+
+// silence unused-import warning when helper paths change during refactors
+#[allow(dead_code)]
+fn _ensure_usage_shape_link(usage: &mut Value) {
+    ensure_responses_usage_shape(usage);
 }
 
 // ============================================================================
@@ -740,7 +878,7 @@ pub fn create_logged_passthrough_stream(
                     }
                     is_first_chunk = false;
                     if inspect_sse_events {
-                        crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
+                        append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
 
                         // 尝试解析并记录完整的 SSE 事件
                         while let Some(event_text) = take_sse_block(&mut buffer) {

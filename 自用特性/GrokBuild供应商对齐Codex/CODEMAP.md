@@ -50,6 +50,7 @@
 | `src-tauri/src/proxy/providers/transform_codex_anthropic.rs` | Anthropic→Responses usage 始终补全 details |
 | `src-tauri/src/proxy/providers/streaming_codex_chat.rs` | 流式默认 usage 补全 details |
 | `src-tauri/src/proxy/providers/streaming_codex_anthropic.rs` | 流式默认 usage 补全 details |
+| `src-tauri/src/proxy/response_processor.rs` | codex/grokbuild 流式与非流式响应出口补全 usage details |
 
 关键符号：`ensure_responses_usage_shape`、`ensure_responses_payload_usage`
 
