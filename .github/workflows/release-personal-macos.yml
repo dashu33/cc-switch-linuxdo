@@ -111,20 +111,22 @@ jobs:
           fi
           echo "✅ Tauri updater signing key prepared (Apple code-sign intentionally ad-hoc)"
 
+
       - name: Stamp personal version from tag
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag }}" ]; then
-            TAG="${{ inputs.tag }}"
+          TAG="${GITHUB_REF_NAME}"
+          VERSION_TAG="${TAG#v}"
+          # WiX/MSI only accepts numeric prerelease segments (max 65535).
+          # Map 3.17.1-personal.10 -> 3.17.1-10 for package/Cargo/tauri version.
+          # Release asset names still use the original git tag.
+          if [[ "$VERSION_TAG" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-personal\.([0-9]+)$ ]]; then
+            VERSION="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
           else
-            TAG="${GITHUB_REF_NAME}"
+            VERSION="$VERSION_TAG"
           fi
-          if [[ "$TAG" != v* ]]; then
-            echo "Skipping version stamp for non-tag ref: $TAG"
-            exit 0
-          fi
-          VERSION="${TAG#v}"
+          echo "Tag version: $VERSION_TAG"
           echo "Stamping app version to: $VERSION"
           export VERSION
           node <<'NODE'
@@ -145,6 +147,7 @@ jobs:
           console.log("package.json:", JSON.parse(fs.readFileSync("package.json", "utf8")).version);
           console.log("tauri.conf.json:", JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8")).version);
           NODE
+
 
 
       - name: Build Tauri App (macOS universal, unsigned)

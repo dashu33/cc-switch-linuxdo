@@ -96,12 +96,22 @@ jobs:
           fi
           echo "✅ Tauri signing key prepared"
 
+
       - name: Stamp personal version from tag
         shell: bash
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
-          VERSION="${TAG#v}"
+          VERSION_TAG="${TAG#v}"
+          # WiX/MSI only accepts numeric prerelease segments (max 65535).
+          # Map 3.17.1-personal.10 -> 3.17.1-10 for package/Cargo/tauri version.
+          # Release asset names still use the original git tag.
+          if [[ "$VERSION_TAG" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-personal\.([0-9]+)$ ]]; then
+            VERSION="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
+          else
+            VERSION="$VERSION_TAG"
+          fi
+          echo "Tag version: $VERSION_TAG"
           echo "Stamping app version to: $VERSION"
           export VERSION
           node <<'NODE'
@@ -124,6 +134,7 @@ jobs:
           NODE
 
 
+
       - name: Build Tauri App (Windows x64)
 
         shell: pwsh
@@ -139,17 +150,18 @@ jobs:
 
           $msi = Get-ChildItem -Path (Join-Path $targetRoot 'bundle/msi') -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($null -eq $msi) {
-            throw 'No Windows MSI installer found'
-          }
-          $dest = "CC-Switch-$VERSION-Windows.msi"
-          Copy-Item $msi.FullName (Join-Path release-assets $dest)
-          Write-Host "Installer copied: $dest"
-          $sigPath = "$($msi.FullName).sig"
-          if (Test-Path $sigPath) {
-            Copy-Item $sigPath (Join-Path release-assets ("$dest.sig"))
-            Write-Host "Signature copied: $dest.sig"
+            Write-Warning 'No Windows MSI installer found (will still publish portable/NSIS if present)'
           } else {
-            Write-Warning "Signature not found for $($msi.Name)"
+            $dest = "CC-Switch-$VERSION-Windows.msi"
+            Copy-Item $msi.FullName (Join-Path release-assets $dest)
+            Write-Host "Installer copied: $dest"
+            $sigPath = "$($msi.FullName).sig"
+            if (Test-Path $sigPath) {
+              Copy-Item $sigPath (Join-Path release-assets ("$dest.sig"))
+              Write-Host "Signature copied: $dest.sig"
+            } else {
+              Write-Warning "Signature not found for $($msi.Name)"
+            }
           }
 
           $nsis = Get-ChildItem -Path (Join-Path $targetRoot 'bundle/nsis') -Recurse -Include *.exe -ErrorAction SilentlyContinue | Select-Object -First 1
