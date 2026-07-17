@@ -162,7 +162,7 @@ export function useProviderActions(
         activeApp === "claude" &&
         provider.meta?.providerType === "github_copilot";
       const isCodexChatFormat =
-        activeApp === "codex" &&
+        (activeApp === "codex" || activeApp === "grokbuild") &&
         (provider.meta?.apiFormat === "openai_chat" ||
           (typeof (provider.settingsConfig as Record<string, any>)?.config ===
             "string" &&
@@ -172,7 +172,7 @@ export function useProviderActions(
               ),
             )));
       const isCodexAnthropicFormat =
-        activeApp === "codex" &&
+        (activeApp === "codex" || activeApp === "grokbuild") &&
         (provider.meta?.apiFormat === "anthropic" ||
           (typeof (provider.settingsConfig as Record<string, any>)?.config ===
             "string" &&
@@ -223,7 +223,9 @@ export function useProviderActions(
           });
         } else if (
           provider.meta?.isFullUrl &&
-          (activeApp === "claude" || activeApp === "codex")
+          (activeApp === "claude" ||
+            activeApp === "codex" ||
+            activeApp === "grokbuild")
         ) {
           proxyRequiredReason = t("notifications.proxyReasonFullUrl", {
             defaultValue: "开启了完整 URL 连接模式",
@@ -284,6 +286,9 @@ export function useProviderActions(
           if (activeApp === "codex") {
             messageKey = "notifications.codexRestartRequired";
             defaultMessage = "切换成功，请重启客户端以生效";
+          } else if (activeApp === "grokbuild") {
+            messageKey = "notifications.grokBuildRestartRequired";
+            defaultMessage = "切换成功，请重启 Grok Build 以生效";
           } else if (activeApp === "claude-desktop") {
             if (provider.meta?.claudeDesktopMode === "proxy") {
               messageKey = "notifications.claudeDesktopProxyRestartRequired";
