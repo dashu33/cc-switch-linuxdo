@@ -58,7 +58,7 @@
 
 1. **落盘与推送分支**
    - 相关改动已按特性拆分提交。
-   - 推送到 GitHub 自用分支仓库（当前常见：`origin` = `dashu33/cc-switch`，自用主线 `main`，上游镜像 `upstream-sync`，临时开发分支可用 `codex/*`）。
+   - 推送到 GitHub 自用分支仓库（当前常见：`origin` = `dashu33/cc-switch-linuxdo`，自用主线 `main`，上游镜像 `upstream-sync`，临时开发分支可用 `codex/*`）。
 2. **远端编译 + 发布资产**
    - 打自用 tag：`v*-personal*`（例：`v3.17.1-personal.7`）。
    - 触发并等待：

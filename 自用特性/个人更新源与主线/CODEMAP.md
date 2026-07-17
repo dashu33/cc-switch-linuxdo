@@ -6,7 +6,7 @@
 
 | 路径 | 作用 |
 |---|---|
-| `src-tauri/tauri.conf.json` | updater endpoint → `dashu33/cc-switch/.../latest.json` |
+| `src-tauri/tauri.conf.json` | updater endpoint → `dashu33/cc-switch-linuxdo/.../latest.json` |
 | `src-tauri/src/commands/misc.rs` | `check_for_updates` 打开个人 releases/latest |
 | `src/components/settings/AboutSection.tsx` | 关于页 GitHub / 发布说明链接 |
 | `src/components/DatabaseUpgrade.tsx` | 数据库升级页下载链接 |
@@ -26,7 +26,7 @@
 ## 数据流
 
 1. UI 检查更新 → Tauri updater 读 `tauri.conf.json` endpoint
-2. endpoint → `https://github.com/dashu33/cc-switch/releases/latest/download/latest.json`
+2. endpoint → `https://github.com/dashu33/cc-switch-linuxdo/releases/latest/download/latest.json`
 3. 便携版 / 失败回退 → `check_for_updates` 打开同一仓库 releases 页
 4. personal tag push → personal workflow 构建并上传资产 + `latest.json`
 5. GitHub 将该 personal release 标为 latest，供下次检查更新命中
@@ -41,7 +41,7 @@
 ## 验证命令
 
 ```powershell
-rg -n "dashu33/cc-switch|farion1231/cc-switch" src-tauri/tauri.conf.json src-tauri/src/commands/misc.rs src/components/settings/AboutSection.tsx src/components/DatabaseUpgrade.tsx src-tauri/Cargo.toml
+rg -n "dashu33/cc-switch-linuxdo|farion1231/cc-switch" src-tauri/tauri.conf.json src-tauri/src/commands/misc.rs src/components/settings/AboutSection.tsx src/components/DatabaseUpgrade.tsx src-tauri/Cargo.toml
 git branch -vv
 git rev-parse --abbrev-ref HEAD
 ```

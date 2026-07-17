@@ -239,7 +239,7 @@ jobs:
             - 新建默认 `openai_chat`（Chat Completions 需路由）
             - `自用特性/` 文档已随代码上传，便于对齐主程序
 
-            > 本 Release 为自用 latest（dashu33/cc-switch / main），供应用内检查更新使用；完整上游签名多平台请走 `release.yml`。
+            > 本 Release 为自用 latest（dashu33/cc-switch-linuxdo / main），供应用内检查更新使用；完整上游签名多平台请走 `release.yml`。
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

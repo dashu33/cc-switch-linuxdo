@@ -7,7 +7,7 @@
 > **禁止**把生产源码复制进 `自用特性/`。  
 > **发布** = 推 GitHub 分支 + personal 远端包（Windows + mac 无签名）+ 本机编译 exe 并替换安装版；详见 `AGENTS.md` 与 [自用特性保存方案](./自用特性保存方案/)。
 
-> **主线约定**：`main` = 自用产品线；`upstream-sync` = 作者镜像；检查更新只看 `dashu33/cc-switch` Releases。
+> **主线约定**：`main` = 自用产品线；`upstream-sync` = 作者镜像；检查更新只看 `dashu33/cc-switch-linuxdo` Releases。
 
 ## 特性列表
 

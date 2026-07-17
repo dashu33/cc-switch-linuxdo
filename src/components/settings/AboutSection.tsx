@@ -430,13 +430,13 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
 
       if (!displayVersion) {
         await settingsApi.openExternal(
-          "https://github.com/dashu33/cc-switch/releases",
+          "https://github.com/dashu33/cc-switch-linuxdo/releases",
         );
         return;
       }
 
       await settingsApi.openExternal(
-        `https://github.com/dashu33/cc-switch/releases/tag/${displayVersion}`,
+        `https://github.com/dashu33/cc-switch-linuxdo/releases/tag/${displayVersion}`,
       );
     } catch (error) {
       console.error("[AboutSection] Failed to open release notes", error);
@@ -872,7 +872,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
               size="sm"
               onClick={() =>
                 settingsApi.openExternal(
-                  "https://github.com/dashu33/cc-switch",
+                  "https://github.com/dashu33/cc-switch-linuxdo",
                 )
               }
               className="h-8 gap-1.5 text-xs"

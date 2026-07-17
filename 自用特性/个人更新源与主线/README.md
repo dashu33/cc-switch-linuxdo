@@ -6,21 +6,21 @@
 
 把本分叉的检查更新、发布与日常开发统一到个人仓库与自用主线：
 
-- 仓库：`dashu33/cc-switch`
+- 仓库：`dashu33/cc-switch-linuxdo`
 - 自用主线：`main`
 - 上游镜像线：`upstream-sync`（跟踪 `farion1231/cc-switch`）
-- 检查更新：只看 `dashu33/cc-switch` 的 GitHub Releases / `latest.json`
+- 检查更新：只看 `dashu33/cc-switch-linuxdo` 的 GitHub Releases / `latest.json`
 
 ## 用户行为
 
 1. 设置 → 关于 → 检查更新：拉取个人仓库 `releases/latest` 的 `latest.json`。
-2. 便携版或更新失败回退：打开 `https://github.com/dashu33/cc-switch/releases/latest`。
-3. 关于页 GitHub / 发布说明链接：指向 `dashu33/cc-switch`，不再指向上游作者仓库。
+2. 便携版或更新失败回退：打开 `https://github.com/dashu33/cc-switch-linuxdo/releases/latest`。
+3. 关于页 GitHub / 发布说明链接：指向 `dashu33/cc-switch-linuxdo`，不再指向上游作者仓库。
 4. 日常开发与 personal 出包：默认在 `main` 上完成。
 
 ## 关键决策
 
-1. **一个分叉**：只保留 `dashu33/cc-switch` 作为个人分叉。
+1. **一个分叉**：只保留 `dashu33/cc-switch-linuxdo` 作为个人分叉。
 2. **一条自用主线**：`main` 是产品线，不再把自用长期挂在 `codex/*`。
 3. **一条上游镜像线**：`upstream-sync` 保持接近作者 `main`，不写自用功能。
 4. **更新看 Release，不看分支名**：应用只消费 `/releases/latest`；分支只决定“打 tag 时包含哪些提交”。
@@ -56,7 +56,7 @@
 
 ## 验收标准
 
-- [ ] `tauri.conf.json` updater endpoint 指向 `dashu33/cc-switch`
+- [ ] `tauri.conf.json` updater endpoint 指向 `dashu33/cc-switch-linuxdo`
 - [ ] 关于页 / 数据库升级页 / `check_for_updates` 回退链接指向个人仓库
 - [ ] personal Windows release 生成 `latest.json` 且 release 为 latest
 - [ ] 默认开发与发布主线为 `main`
@@ -65,7 +65,7 @@
 
 ## 回归清单
 
-1. 打开关于页，确认 GitHub 链接是 `dashu33/cc-switch`
+1. 打开关于页，确认 GitHub 链接是 `dashu33/cc-switch-linuxdo`
 2. 点击检查更新：请求个人仓库 latest，不请求作者仓库
 3. 打 personal tag 后，Release 页可作为 `/releases/latest`
 4. 本机 `main` 可继续开发与发布
