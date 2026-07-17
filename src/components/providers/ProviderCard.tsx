@@ -42,13 +42,14 @@ import type { ProviderStats } from "@/types/usage";
 import type { ModelsProbeStatus } from "@/hooks/useFetchCurrentProviderModels";
 import { pickModelBrandIcons } from "@/utils/modelBrandIcon";
 import { applyProviderModel } from "@/utils/applyProviderModel";
+import {
+  providerNeedsRouting,
+  supportsProviderQuickAdjust,
+} from "@/utils/providerQuickAdjust";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
 import {
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
-  extractCodexWireApi,
-  isCodexAnthropicWireApi,
-  isCodexChatWireApi,
 } from "@/utils/providerConfigUtils";
 import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
 import { useProviderHealth } from "@/lib/query/failover";
@@ -320,27 +321,11 @@ export function ProviderCard({
   const isCodexOauth =
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
   const hasInlineQuickAdjust =
-    Boolean(onUpdate) &&
-    (appId === "codex" || appId === "claude" || appId === "claude-desktop");
-  const codexNeedsRouting = useMemo(() => {
-    if (appId !== "codex") return false;
-    if (
-      provider.meta?.apiFormat === "openai_chat" ||
-      provider.meta?.apiFormat === "anthropic"
-    )
-      return true;
-    // 真·官方（无自定义 config 语义）通常不需要路由；有 TOML 时再看 wire_api
-    const config = (provider.settingsConfig as Record<string, any>)?.config;
-    return (
-      typeof config === "string" &&
-      (isCodexChatWireApi(extractCodexWireApi(config)) ||
-        isCodexAnthropicWireApi(extractCodexWireApi(config)))
-    );
-  }, [
-    appId,
-    provider.meta?.apiFormat,
-    (provider.settingsConfig as Record<string, any>)?.config,
-  ]);
+    Boolean(onUpdate) && supportsProviderQuickAdjust(appId);
+  const needsRouting = useMemo(
+    () => providerNeedsRouting(provider, appId),
+    [appId, provider],
+  );
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用（OpenCode/OpenClaw/Hermes）：使用 isInConfig 代替 isCurrent
   const shouldAutoQuery =
@@ -776,20 +761,9 @@ export function ProviderCard({
                   </span>
                 )}
 
-              {appId === "claude" &&
-                provider.category !== "official" &&
-                provider.meta?.apiFormat &&
-                provider.meta.apiFormat !== "anthropic" && (
-                  <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
-                    {t("claudeCode.needsRouting", {
-                      defaultValue: "需要路由",
-                    })}
-                  </span>
-                )}
-
-              {codexNeedsRouting && (
+              {needsRouting && (
                 <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
-                  {t("codex.needsRouting", {
+                  {t("provider.needsRouting", {
                     defaultValue: "需要路由",
                   })}
                 </span>
@@ -881,7 +855,7 @@ export function ProviderCard({
               </button>
             )}
 
-            {/* Codex / Claude / Claude Desktop：上游格式 + 模型下拉 + 获取 + LOGO
+            {/* Codex / Claude / Claude Desktop / Grok Build：上游格式 + 模型下拉 + 获取 + LOGO
                 不因 category=official 隐藏——第三方转发常被标成官方分类，有凭证即可用 */}
             {hasInlineQuickAdjust && onUpdate && (
               <CodexProviderQuickAdjust

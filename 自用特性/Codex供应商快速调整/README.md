@@ -16,10 +16,12 @@
 
 同时满足：
 
-- `appId` ∈ `codex` | `claude` | `claude-desktop`
+- `supportsProviderQuickAdjust(appId)` 为真  
+  当前：`codex` | `claude` | `claude-desktop` | `grokbuild`
 - 列表传入了 `onUpdate`
 
-> 自用约定：不因 `category === "official"` 隐藏。第三方转发常被标成官方分类，只要有 baseUrl/key 即可用快速调整与拉模型；真·官方（无凭证）探测会 skipped，UI 仍可见便于手动配置后使用。
+> 自用约定：不因 `category === "official"` 隐藏。第三方转发常被标成官方分类，只要有 baseUrl/key 即可用快速调整与拉模型；真·官方（无凭证）探测会 skipped，UI 仍可见便于手动配置后使用。  
+> Grok Build 的格式双写与模型写入细节见 `自用特性/GrokBuild供应商对齐Codex/`。
 
 ## 上游格式
 
@@ -31,7 +33,7 @@
 
 ### 持久化
 
-- 写入 `provider.meta.apiFormat`
+- 通过全局 helper `applyProviderApiFormat` 写入 `provider.meta.apiFormat`
 - **不改** Codex 侧 `wire_api`（对接 Codex 自身仍按 Responses）
 - 代理层转换由 `meta.apiFormat` 驱动
 

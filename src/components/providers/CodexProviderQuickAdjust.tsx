@@ -8,7 +8,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import type { ClaudeApiFormat, CodexApiFormat, Provider } from "@/types";
+import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import type { ModelsProbeStatus } from "@/hooks/useFetchCurrentProviderModels";
 import type { ModelBrandIcon } from "@/utils/modelBrandIcon";
@@ -20,15 +20,18 @@ import {
   type FetchedModel,
 } from "@/lib/api/model-fetch";
 import {
-  codexApiFormatFromWireApi,
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
-  extractCodexModelName,
-  extractCodexWireApi,
 } from "@/utils/providerConfigUtils";
 import { applyProviderModel } from "@/utils/applyProviderModel";
 import { resolveProviderModelsProbeTarget } from "@/utils/providerModelsProbe";
-import { deepClone } from "@/utils/deepClone";
+import {
+  applyProviderApiFormat,
+  isClaudeFamilyApp,
+  resolveProviderApiFormat,
+  resolveProviderQuickModel,
+  type ProviderQuickApiFormat,
+} from "@/utils/providerQuickAdjust";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -39,8 +42,6 @@ import {
 } from "@/components/ui/select";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { cn } from "@/lib/utils";
-
-type QuickApiFormat = ClaudeApiFormat | CodexApiFormat;
 
 interface CodexProviderQuickAdjustProps {
   appId: AppId;
@@ -71,50 +72,12 @@ interface CodexProviderQuickAdjustProps {
   belowUpstream?: ReactNode;
 }
 
-function isClaudeFamily(appId: AppId): boolean {
-  return appId === "claude" || appId === "claude-desktop";
-}
-
 function pickCodexApiKey(provider: Provider): string {
   const config = provider.settingsConfig as Record<string, any> | undefined;
   const authKey = config?.auth?.OPENAI_API_KEY;
   if (typeof authKey === "string" && authKey.trim()) return authKey.trim();
   const configText = typeof config?.config === "string" ? config.config : "";
   return extractCodexExperimentalBearerToken(configText) || "";
-}
-
-function extractClaudeModelName(provider: Provider): string {
-  const env = (provider.settingsConfig as Record<string, any> | undefined)?.env;
-  if (!env || typeof env !== "object") return "";
-  const model = env.ANTHROPIC_MODEL;
-  return typeof model === "string" ? model.trim() : "";
-}
-
-function resolveApiFormat(provider: Provider, appId: AppId): QuickApiFormat {
-  const metaFormat = provider.meta?.apiFormat;
-  if (
-    metaFormat === "openai_chat" ||
-    metaFormat === "openai_responses" ||
-    metaFormat === "anthropic" ||
-    metaFormat === "gemini_native"
-  ) {
-    if (appId === "codex" && metaFormat === "gemini_native") {
-      return "openai_responses";
-    }
-    return metaFormat;
-  }
-  if (appId === "codex") {
-    const configText =
-      typeof (provider.settingsConfig as Record<string, any>)?.config ===
-      "string"
-        ? ((provider.settingsConfig as Record<string, any>).config as string)
-        : "";
-    return (
-      codexApiFormatFromWireApi(extractCodexWireApi(configText)) ??
-      "openai_responses"
-    );
-  }
-  return "anthropic";
 }
 
 function resolveProbeCredentials(
@@ -274,20 +237,14 @@ export function CodexProviderQuickAdjust({
     });
   }, [fetchFailureReason, fetchStatus, modelsProbeReason, t]);
 
-  const configText = useMemo(() => {
-    const config = provider.settingsConfig as Record<string, any> | undefined;
-    return typeof config?.config === "string" ? config.config : "";
-  }, [provider.settingsConfig]);
-
   const currentFormat = useMemo(
-    () => resolveApiFormat(provider, appId),
+    () => resolveProviderApiFormat(provider, appId),
     [appId, provider],
   );
-  const currentModel = useMemo(() => {
-    if (appId === "codex") return extractCodexModelName(configText) || "";
-    if (isClaudeFamily(appId)) return extractClaudeModelName(provider);
-    return "";
-  }, [appId, configText, provider]);
+  const currentModel = useMemo(
+    () => resolveProviderQuickModel(provider, appId),
+    [appId, provider],
+  );
   const { baseUrl, apiKey } = useMemo(
     () => resolveProbeCredentials(provider, appId),
     [appId, provider],
@@ -307,17 +264,14 @@ export function CodexProviderQuickAdjust({
 
   const handleFormatChange = useCallback(
     async (value: string) => {
-      const format = value as QuickApiFormat;
+      const format = value as ProviderQuickApiFormat;
       if (format === currentFormat) return;
-      const next = deepClone(provider) as Provider;
-      next.meta = {
-        ...(next.meta ?? {}),
-        apiFormat: format,
-      };
+      const next = applyProviderApiFormat(provider, appId, format);
       // Codex/Claude：上游格式都写 meta.apiFormat；Codex 客户端 wire_api 仍固定 responses
+      // Grok Build：同步写 TOML api_backend
       await persistProvider(next);
     },
-    [currentFormat, persistProvider, provider],
+    [appId, currentFormat, persistProvider, provider],
   );
 
   const handleModelChange = useCallback(
@@ -461,7 +415,7 @@ export function CodexProviderQuickAdjust({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="z-[200] min-w-[var(--radix-select-trigger-width)]">
-                {isClaudeFamily(appId) ? (
+                {isClaudeFamilyApp(appId) ? (
                   <>
                     <SelectItem value="anthropic">
                       {t("providerForm.apiFormatAnthropic", {

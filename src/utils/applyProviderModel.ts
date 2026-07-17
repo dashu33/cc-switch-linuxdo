@@ -7,6 +7,10 @@ import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { deepClone } from "@/utils/deepClone";
 import { setCodexModelName } from "@/utils/providerConfigUtils";
+import {
+  parseGrokBuildConfig,
+  updateGrokBuildConfig,
+} from "@/utils/grokBuildConfig";
 
 export function applyProviderModel(
   provider: Provider,
@@ -48,6 +52,21 @@ export function applyProviderModel(
       env.GOOGLE_MODEL = trimmed;
     }
     settings.env = env;
+    next.settingsConfig = settings;
+    return next;
+  }
+
+  if (appId === "grokbuild") {
+    const prevConfig =
+      typeof settings.config === "string" ? settings.config : "";
+    const parsed = parseGrokBuildConfig(prevConfig, next.name || "");
+    // Keep selected profile when possible; always update the upstream model id.
+    settings.config = updateGrokBuildConfig(prevConfig, {
+      ...parsed,
+      upstreamModel: trimmed,
+      model: parsed.model || trimmed,
+      name: parsed.name || next.name || trimmed,
+    });
     next.settingsConfig = settings;
     return next;
   }

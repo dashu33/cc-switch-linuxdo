@@ -7,7 +7,8 @@
 | 文件 | 角色 |
 |------|------|
 | `src/components/providers/CodexProviderQuickAdjust.tsx` | UI + 格式/模型/获取状态色 + 失败原因旁显 |
-| `src/components/providers/ProviderCard.tsx` | codex/claude/claude-desktop 挂载（含 official 分类）；传 `onUpdate` + `modelsProbeStatus` |
+| `src/components/providers/ProviderCard.tsx` | 通过 `supportsProviderQuickAdjust` 挂载（含 grokbuild / official 分类）；传 `onUpdate` + `modelsProbeStatus` |
+| `src/utils/providerQuickAdjust.ts` | 全局：App 门控、format 解析/写入、需路由判定、模型读取 |
 | `src/components/providers/ProviderList.tsx` | 透传 `onUpdate`、probe 状态 |
 | `src/App.tsx` | `updateProvider` |
 | `src/lib/api/model-fetch.ts` | 拉模型 |
@@ -35,11 +36,11 @@ rg -n "CodexProviderQuickAdjust|modelsProbeStatus|fetchStatus|fetchButtonClassNa
 
 | 符号 | 职责 |
 |------|------|
-| `pickCodexApiKey` | Key 来源 |
-| `resolveApiFormat` | meta → wire → default |
+| `pickCodexApiKey` | Codex Key 回退来源 |
+| `resolveProviderApiFormat` | 全局 helper：meta → app-native → default |
 | `persistProvider` | `onUpdate` + `isSaving` |
-| `handleFormatChange` | 写 `meta.apiFormat` |
-| `handleModelChange` | `setCodexModelName` |
+| `handleFormatChange` | `applyProviderApiFormat` |
+| `handleModelChange` | `applyProviderModel` |
 | `handleFetchModels` | 拉模型 + `fetchStatus` |
 | `fetchButtonClassName` | 按钮配色 |
 | `fetchStatusLabel` | 按钮文案 |
@@ -73,4 +74,5 @@ settings.config = setCodexModelName(prevConfig, modelId);
 - `CodexProviderQuickAdjust` 现接收 `appId`
 - `resolveProbeCredentials` 复用 `resolveProviderModelsProbeTarget`
 - 模型写入统一 `applyProviderModel`
-- `ProviderCard` 挂载条件：codex/claude/claude-desktop + onUpdate（**含 official 分类**）
+- format / 需路由 / 门控统一走 `providerQuickAdjust`
+- `ProviderCard` 挂载条件：`supportsProviderQuickAdjust(appId)` + onUpdate（**含 official 分类**；含 Grok Build）
