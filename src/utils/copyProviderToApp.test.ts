@@ -209,6 +209,50 @@ wire_api = "responses"
     expect(result.meta?.apiFormat).toBe("anthropic");
   });
 
+  it("converts Claude provider into Grok Build toml settings", () => {
+    const source = makeClaudeProvider({ name: "Grok Gateway" });
+    const result = convertProviderToApp(source, "claude", "grokbuild");
+
+    expect(result.providerKey).toBeUndefined();
+    expect(result.addToLive).toBeUndefined();
+    expect(result.meta?.apiFormat).toBe("openai_responses");
+
+    const configText = String(result.settingsConfig.config);
+    expect(configText).toContain('[models]');
+    expect(configText).toContain('default = "claude-sonnet-4-20250514"');
+    expect(configText).toContain('base_url = "https://api.example.com"');
+    expect(configText).toContain('api_key = "sk-test-key"');
+    expect(configText).toContain('name = "Grok Gateway"');
+    expect(configText).toContain('api_backend = "responses"');
+    expect(configText).toContain("context_window = 500000");
+  });
+
+  it("reads Grok Build credentials from provider-owned toml", () => {
+    const provider: Provider = {
+      id: "grok-1",
+      name: "My Grok Provider",
+      settingsConfig: {
+        config: `[models]
+default = "proxy-main"
+
+[model.proxy-main]
+model = "grok-4.5"
+base_url = "https://grok.example.com/v1"
+name = "My Grok Provider"
+api_key = "sk-grok"
+api_backend = "responses"
+context_window = 500000
+`,
+      },
+    };
+
+    expect(extractPortableCredentials(provider, "grokbuild")).toEqual({
+      baseUrl: "https://grok.example.com/v1",
+      apiKey: "sk-grok",
+      model: "grok-4.5",
+    });
+  });
+
   it("rejects same-app conversion", () => {
     expect(() =>
       convertProviderToApp(makeClaudeProvider(), "claude", "claude"),

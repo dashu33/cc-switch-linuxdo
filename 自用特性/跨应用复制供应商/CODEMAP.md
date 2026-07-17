@@ -7,6 +7,7 @@
 | 文件 | 角色 |
 |------|------|
 | `src/utils/copyProviderToApp.ts` | **核心**：提取凭证、URL 规范化、meta 清洗、`convertProviderToApp`、`getCopyTargetApps` |
+| `src/utils/grokBuildConfig.ts` | Grok Build TOML 构建/解析（复制到 Grok Build 时使用） |
 | `src/utils/copyProviderToApp.test.ts` | 单元测试 |
 | `src/hooks/useCopyProviderToApp.ts` | 异步执行：拉目标列表、防 key 冲突、add、缓存失效、toast |
 | `src/components/providers/ProviderContextMenu.tsx` | 右键菜单 UI：Duplicate + 复制到… 子菜单 |

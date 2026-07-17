@@ -59,6 +59,7 @@
 | OpenCode | `options.baseURL` | `options.apiKey` | 第一个 model id |
 | OpenClaw | `baseUrl` | `apiKey` | 第一个 model |
 | Hermes | `base_url` | `api_key` | 第一个 model |
+| Grok Build | `settingsConfig.config` TOML 的 `base_url` | 同 TOML 的 `api_key` | `upstream model` / profile |
 
 ## 写入目标应用时的形态
 
@@ -150,3 +151,29 @@ pnpm exec vitest run src/utils/copyProviderToApp.test.ts
 ## 相关文档
 
 - 代码地图：[CODEMAP.md](./CODEMAP.md)
+
+
+### Grok Build
+
+```ts
+settingsConfig: {
+  config: `
+[models]
+default = "<model-or-default>"
+
+[model."<model-or-default>"]
+model = "<model-or-default>"
+base_url = "..."
+name = "<provider name>"
+api_key = "..."
+api_backend = "responses"
+context_window = 500000
+`
+}
+meta.apiFormat = "openai_responses" // 若源不是 openai_chat/responses
+```
+
+说明：
+
+- Grok Build 校验需要完整 TOML 字段；复制时不能只写空对象，否则会提示“缺少字段”。
+- 默认 `api_backend=responses`，`context_window=500000`。

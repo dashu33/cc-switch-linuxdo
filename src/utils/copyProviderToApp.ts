@@ -16,6 +16,13 @@ import {
   extractCodexExperimentalBearerToken,
   extractCodexModelName,
 } from "@/utils/providerConfigUtils";
+import {
+  buildGrokBuildConfig,
+  GROK_BUILD_DEFAULT_API_BACKEND,
+  GROK_BUILD_DEFAULT_CONTEXT_WINDOW,
+  GROK_BUILD_DEFAULT_MODEL,
+  parseGrokBuildConfig,
+} from "@/utils/grokBuildConfig";
 
 export const COPYABLE_APP_IDS: AppId[] = [...APP_IDS];
 
@@ -47,6 +54,7 @@ const DEFAULT_MODELS: Partial<Record<AppId, string>> = {
   opencode: "gpt-5.5",
   openclaw: "gpt-5.5",
   hermes: "gpt-5.5",
+  grokbuild: GROK_BUILD_DEFAULT_MODEL,
 };
 
 function asRecord(value: unknown): Record<string, any> {
@@ -227,6 +235,18 @@ export function extractPortableCredentials(
     };
   }
 
+  if (sourceApp === "grokbuild") {
+    const parsed = parseGrokBuildConfig(
+      typeof config.config === "string" ? config.config : undefined,
+      firstString(provider.name),
+    );
+    return {
+      baseUrl: firstString(parsed.baseUrl),
+      apiKey: firstString(parsed.apiKey),
+      model: firstString(parsed.upstreamModel, parsed.model),
+    };
+  }
+
   return { baseUrl: "", apiKey: "", model: "" };
 }
 
@@ -319,6 +339,23 @@ function buildSettingsConfig(
     };
   }
 
+  if (targetApp === "grokbuild") {
+    // Grok Build stores a provider-owned TOML document under settingsConfig.config.
+    // Required fields: [models].default, [model.<profile>].{model,base_url,name,api_key|env_key,api_backend,context_window}
+    const profile = model || GROK_BUILD_DEFAULT_MODEL;
+    return {
+      config: buildGrokBuildConfig({
+        model: profile,
+        upstreamModel: profile,
+        baseUrl,
+        name: displayName || profile,
+        apiKey,
+        apiBackend: GROK_BUILD_DEFAULT_API_BACKEND,
+        contextWindow: GROK_BUILD_DEFAULT_CONTEXT_WINDOW,
+      }),
+    };
+  }
+
   return {};
 }
 
@@ -366,6 +403,14 @@ export function convertProviderToApp(
   // does not keep treating the destination as OpenAI-compatible.
   if (targetApp === "claude" || targetApp === "claude-desktop") {
     meta.apiFormat = "anthropic";
+  }
+
+  // Grok Build proxies OpenAI-compatible gateways by default. If the source
+  // was Anthropic-only, fall back to Responses so the destination is usable.
+  if (targetApp === "grokbuild") {
+    if (meta.apiFormat !== "openai_chat" && meta.apiFormat !== "openai_responses") {
+      meta.apiFormat = "openai_responses";
+    }
   }
 
   return {
