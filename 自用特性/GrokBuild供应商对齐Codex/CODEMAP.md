@@ -41,6 +41,18 @@
 - Grok TOML 字段名变化时同步改 `grokBuildConfig` / `providerQuickAdjust`
 - 不要把官方 OAuth 供应商误开快捷拉取
 
+
+## 代理 usage 兼容
+
+| 路径 | 作用 |
+|---|---|
+| `src-tauri/src/proxy/providers/transform_codex_chat.rs` | `ensure_responses_usage_shape` / Chat→Responses 始终补全 details |
+| `src-tauri/src/proxy/providers/transform_codex_anthropic.rs` | Anthropic→Responses usage 始终补全 details |
+| `src-tauri/src/proxy/providers/streaming_codex_chat.rs` | 流式默认 usage 补全 details |
+| `src-tauri/src/proxy/providers/streaming_codex_anthropic.rs` | 流式默认 usage 补全 details |
+
+关键符号：`ensure_responses_usage_shape`、`ensure_responses_payload_usage`
+
 ## 验证命令
 
 ```powershell

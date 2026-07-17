@@ -1626,12 +1626,105 @@ pub(crate) fn custom_tool_input_from_chat_arguments(arguments: &str) -> String {
     }
 }
 
+/// Ensures Responses usage always carries the nested detail objects that strict
+/// clients (Grok Build / some Codex builds) require when deserializing.
+///
+/// Upstream OpenAI-compatible gateways frequently omit `input_tokens_details`
+/// when there is no cache activity. That is legal for OpenAI, but Grok Build
+/// fails the whole turn with:
+/// `serialization error: missing field `input_tokens_details``.
+pub(crate) fn ensure_responses_usage_shape(usage: &mut Value) {
+    if !usage.is_object() {
+        *usage = json!({
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "input_tokens_details": {
+                "cached_tokens": 0,
+                "cache_write_tokens": 0
+            },
+            "output_tokens_details": { "reasoning_tokens": 0 }
+        });
+        return;
+    }
+
+    if usage.get("input_tokens").and_then(|v| v.as_u64()).is_none() {
+        usage["input_tokens"] = json!(0);
+    }
+    if usage.get("output_tokens").and_then(|v| v.as_u64()).is_none() {
+        usage["output_tokens"] = json!(0);
+    }
+    if usage.get("total_tokens").and_then(|v| v.as_u64()).is_none() {
+        let input = usage
+            .get("input_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let output = usage
+            .get("output_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        usage["total_tokens"] = json!(input.saturating_add(output));
+    }
+
+    let cached = usage
+        .pointer("/input_tokens_details/cached_tokens")
+        .or_else(|| usage.get("cache_read_input_tokens"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let cache_write = usage
+        .pointer("/input_tokens_details/cache_write_tokens")
+        .or_else(|| usage.get("cache_creation_input_tokens"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    let mut details = usage
+        .get("input_tokens_details")
+        .cloned()
+        .filter(|v| v.is_object())
+        .unwrap_or_else(|| json!({}));
+    if details.get("cached_tokens").is_none() {
+        details["cached_tokens"] = json!(cached);
+    }
+    if details.get("cache_write_tokens").is_none() {
+        details["cache_write_tokens"] = json!(cache_write);
+    }
+    usage["input_tokens_details"] = details;
+
+    let mut output_details = usage
+        .get("output_tokens_details")
+        .cloned()
+        .filter(|v| v.is_object())
+        .unwrap_or_else(|| json!({}));
+    if output_details.get("reasoning_tokens").is_none() {
+        output_details["reasoning_tokens"] = json!(0);
+    }
+    usage["output_tokens_details"] = output_details;
+}
+
+/// Normalize a Responses JSON body (or an SSE event that wraps one) so nested
+/// usage detail objects are always present for strict clients.
+pub(crate) fn ensure_responses_payload_usage(payload: &mut Value) {
+    if let Some(usage) = payload.get_mut("usage") {
+        ensure_responses_usage_shape(usage);
+        return;
+    }
+    if let Some(response) = payload.get_mut("response") {
+        if let Some(usage) = response.get_mut("usage") {
+            ensure_responses_usage_shape(usage);
+        }
+    }
+}
+
 pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
     let Some(usage) = usage.filter(|value| value.is_object() && !value.is_null()) else {
         return json!({
             "input_tokens": 0,
             "output_tokens": 0,
             "total_tokens": 0,
+            "input_tokens_details": {
+                "cached_tokens": 0,
+                "cache_write_tokens": 0
+            },
             "output_tokens_details": { "reasoning_tokens": 0 }
         });
     };
@@ -1672,12 +1765,12 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
                 .and_then(|v| v.as_u64())
         })
         .unwrap_or(0);
-    if cached > 0 || cache_write > 0 {
-        result["input_tokens_details"] = json!({
-            "cached_tokens": cached,
-            "cache_write_tokens": cache_write
-        });
-    }
+    // Always emit nested details: Grok Build rejects Responses usage that omits
+    // `input_tokens_details`, even when both cache buckets are zero.
+    result["input_tokens_details"] = json!({
+        "cached_tokens": cached,
+        "cache_write_tokens": cache_write
+    });
 
     if let Some(details) = usage
         .get("completion_tokens_details")
@@ -2748,6 +2841,53 @@ mod tests {
             "not json"
         );
         assert_eq!(messages[1]["content"], "plain text result");
+    }
+
+    #[test]
+    fn chat_usage_to_responses_always_emits_input_tokens_details() {
+        let usage = chat_usage_to_responses_usage(Some(&json!({
+            "prompt_tokens": 4,
+            "completion_tokens": 2,
+            "total_tokens": 6
+        })));
+        assert_eq!(usage["input_tokens"], 4);
+        assert_eq!(usage["output_tokens"], 2);
+        assert_eq!(usage["input_tokens_details"]["cached_tokens"], 0);
+        assert_eq!(usage["input_tokens_details"]["cache_write_tokens"], 0);
+        assert_eq!(usage["output_tokens_details"]["reasoning_tokens"], 0);
+
+        let empty = chat_usage_to_responses_usage(None);
+        assert_eq!(empty["input_tokens_details"]["cached_tokens"], 0);
+        assert_eq!(empty["input_tokens_details"]["cache_write_tokens"], 0);
+    }
+
+    #[test]
+    fn ensure_responses_usage_shape_fills_missing_details() {
+        let mut usage = json!({
+            "input_tokens": 9,
+            "output_tokens": 1,
+            "total_tokens": 10
+        });
+        ensure_responses_usage_shape(&mut usage);
+        assert_eq!(usage["input_tokens_details"]["cached_tokens"], 0);
+        assert_eq!(usage["input_tokens_details"]["cache_write_tokens"], 0);
+        assert_eq!(usage["output_tokens_details"]["reasoning_tokens"], 0);
+
+        let mut event = json!({
+            "type": "response.completed",
+            "response": {
+                "usage": {
+                    "input_tokens": 3,
+                    "output_tokens": 1,
+                    "total_tokens": 4
+                }
+            }
+        });
+        ensure_responses_payload_usage(&mut event);
+        assert_eq!(
+            event["response"]["usage"]["input_tokens_details"]["cached_tokens"],
+            0
+        );
     }
 
     #[test]

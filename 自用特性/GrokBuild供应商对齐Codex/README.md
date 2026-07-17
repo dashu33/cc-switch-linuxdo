@@ -32,6 +32,18 @@
      - `anthropic` → `messages`
 4. **第一批只覆盖网关类快捷能力**，不做 Grok 官方 OAuth/订阅额度。
 
+
+## 代理兼容补充
+
+Grok Build 对 Responses `usage` 反序列化更严格：即使 cache 为 0，也必须带：
+
+- `usage.input_tokens_details.cached_tokens`
+- `usage.input_tokens_details.cache_write_tokens`
+
+本特性同步修正本地代理 Chat/Anthropic → Responses 转换，避免：
+
+`serialization error: missing field input_tokens_details`
+
 ## 非目标
 
 - 不把 Grok 配置改成 Codex TOML

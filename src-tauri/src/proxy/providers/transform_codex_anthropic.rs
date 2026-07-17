@@ -149,6 +149,10 @@ pub(crate) fn build_responses_usage_from_anthropic(usage: Option<&Value>) -> Val
                 "input_tokens": 0,
                 "output_tokens": 0,
                 "total_tokens": 0,
+                "input_tokens_details": {
+                    "cached_tokens": 0,
+                    "cache_write_tokens": 0
+                },
                 "output_tokens_details": { "reasoning_tokens": 0 }
             })
         }
@@ -178,14 +182,12 @@ pub(crate) fn build_responses_usage_from_anthropic(usage: Option<&Value>) -> Val
         "input_tokens": input_tokens,
         "output_tokens": output,
         "total_tokens": total_tokens,
-        "output_tokens_details": { "reasoning_tokens": reasoning }
-    });
-    if cache_read > 0 || cache_creation > 0 {
-        result["input_tokens_details"] = json!({
+        "input_tokens_details": {
             "cached_tokens": cache_read,
             "cache_write_tokens": cache_creation
-        });
-    }
+        },
+        "output_tokens_details": { "reasoning_tokens": reasoning }
+    });
     // Keep the legacy top-level alias for one compatibility window. New code reads
     // the official nested cache_write_tokens field first.
     if cache_creation > 0 {
