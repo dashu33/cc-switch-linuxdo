@@ -59,9 +59,13 @@ const grokPresetEntries: Array<{
   .map((preset, index) => ({ id: `grokbuild-${index}`, preset }))
   .filter(({ preset }) => preset.category !== "official" && !preset.isOfficial);
 
-export const grokApiBackendFromApiFormat = (format: CodexApiFormat): string => {
-  if (format === "openai_chat") return "chat_completions";
-  if (format === "anthropic") return "messages";
+/**
+ * Client-side api_backend written into Grok TOML.
+ * CC Switch always routes Grok through local `/grokbuild/v1/responses`, so this
+ * stays `responses` regardless of upstream format. Upstream wire format is
+ * stored in `meta.apiFormat` for proxy conversion.
+ */
+export const grokApiBackendFromApiFormat = (_format: CodexApiFormat): string => {
   return "responses";
 };
 

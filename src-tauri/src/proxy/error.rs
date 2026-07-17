@@ -88,8 +88,9 @@ impl IntoResponse for ProxyError {
 
                 // 尝试解析上游响应体为 JSON，如果失败则包装为字符串
                 let error_body = if let Some(body_str) = upstream_body {
-                    if let Ok(json_body) = serde_json::from_str::<serde_json::Value>(body_str) {
-                        // 上游返回的是 JSON，直接透传
+                    if let Ok(mut json_body) = serde_json::from_str::<serde_json::Value>(body_str) {
+                        // 上游 JSON 直接透传，但补齐 Grok/Codex 严格客户端需要的字段。
+                        normalize_proxy_error_body(&mut json_body);
                         json_body
                     } else {
                         // 上游返回的不是 JSON，包装为错误消息
@@ -97,6 +98,8 @@ impl IntoResponse for ProxyError {
                             "error": {
                                 "message": body_str,
                                 "type": "upstream_error",
+                                "code": "upstream_error",
+                                "param": serde_json::Value::Null,
                             }
                         })
                     }
@@ -105,6 +108,8 @@ impl IntoResponse for ProxyError {
                         "error": {
                             "message": format!("Upstream error (status {})", upstream_status),
                             "type": "upstream_error",
+                            "code": "upstream_error",
+                            "param": serde_json::Value::Null,
                         }
                     })
                 };
@@ -163,6 +168,8 @@ impl IntoResponse for ProxyError {
                     "error": {
                         "message": message,
                         "type": "proxy_error",
+                        "code": "proxy_error",
+                        "param": serde_json::Value::Null,
                     }
                 });
 
@@ -171,6 +178,91 @@ impl IntoResponse for ProxyError {
         };
 
         (status, Json(body)).into_response()
+    }
+}
+
+
+fn normalize_proxy_error_body(body: &mut serde_json::Value) {
+    let Some(error) = body.get_mut("error") else {
+        // Some gateways return a bare object without the error wrapper.
+        if body.is_object() {
+            let message = body
+                .get("message")
+                .and_then(|v| v.as_str())
+                .or_else(|| body.get("detail").and_then(|v| v.as_str()))
+                .unwrap_or("Upstream error")
+                .to_string();
+            let error_type = body
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("upstream_error")
+                .to_string();
+            let code = body
+                .get("code")
+                .cloned()
+                .filter(|v| !v.is_null())
+                .unwrap_or_else(|| serde_json::json!(error_type.clone()));
+            *body = serde_json::json!({
+                "error": {
+                    "message": message,
+                    "type": error_type,
+                    "code": code,
+                    "param": body.get("param").cloned().unwrap_or(serde_json::Value::Null),
+                }
+            });
+        }
+        return;
+    };
+
+    if !error.is_object() {
+        let message = error
+            .as_str()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| error.to_string());
+        *error = serde_json::json!({
+            "message": message,
+            "type": "upstream_error",
+            "code": "upstream_error",
+            "param": serde_json::Value::Null,
+        });
+        return;
+    }
+
+    if error
+        .get("message")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true)
+    {
+        let message = error
+            .get("detail")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Upstream error");
+        error["message"] = serde_json::json!(message);
+    }
+    if error
+        .get("type")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true)
+    {
+        error["type"] = serde_json::json!("upstream_error");
+    }
+    let needs_code = match error.get("code") {
+        None => true,
+        Some(v) if v.is_null() => true,
+        Some(v) if v.as_str().map(|s| s.trim().is_empty()).unwrap_or(false) => true,
+        _ => false,
+    };
+    if needs_code {
+        let synthesized = error
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("upstream_error");
+        error["code"] = serde_json::json!(synthesized);
+    }
+    if error.get("param").is_none() {
+        error["param"] = serde_json::Value::Null;
     }
 }
 

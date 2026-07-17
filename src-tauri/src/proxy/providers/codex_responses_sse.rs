@@ -16,12 +16,99 @@
 use bytes::Bytes;
 use serde_json::{json, Value};
 
+use crate::proxy::sse::strip_sse_field;
+
 /// Serialize one Responses SSE event with the standard `event:`/`data:` framing.
 pub(crate) fn sse_event(event: &str, data: Value) -> Bytes {
     Bytes::from(format!(
         "event: {event}\ndata: {}\n\n",
         serde_json::to_string(&data).unwrap_or_default()
     ))
+}
+
+/// Stamp a monotonic `sequence_number` onto an already-framed Responses SSE event.
+///
+/// Used by Chat/Anthropic → Responses converters so every yielded event is valid
+/// for Grok Build even before the outer normalize stream runs. Counter lives in
+/// the caller stream state (not thread-local) so async task hops stay correct.
+pub(crate) fn stamp_sse_event_bytes(bytes: Bytes, next_seq: &mut u64) -> Bytes {
+    let text = match std::str::from_utf8(&bytes) {
+        Ok(s) => s,
+        Err(_) => return bytes,
+    };
+
+    let mut event_name: Option<&str> = None;
+    let mut data_lines: Vec<&str> = Vec::new();
+    let mut other_lines: Vec<&str> = Vec::new();
+    for line in text.lines() {
+        if let Some(name) = strip_sse_field(line, "event") {
+            event_name = Some(name);
+            other_lines.push(line);
+            continue;
+        }
+        if let Some(data) = strip_sse_field(line, "data") {
+            data_lines.push(data);
+            continue;
+        }
+        if !line.is_empty() {
+            other_lines.push(line);
+        }
+    }
+    if data_lines.is_empty() {
+        return bytes;
+    }
+    let data = data_lines.join("\n");
+    if data.trim() == "[DONE]" {
+        return bytes;
+    }
+    let mut payload: Value = match serde_json::from_str(&data) {
+        Ok(v) => v,
+        Err(_) => return bytes,
+    };
+    let before = payload.clone();
+    if payload
+        .get("type")
+        .and_then(|v| v.as_str())
+        .is_some_and(|t| t.starts_with("response."))
+    {
+        if let Some(existing) = payload.get("sequence_number") {
+            if let Some(n) = existing.as_u64() {
+                if n >= *next_seq {
+                    *next_seq = n.saturating_add(1);
+                }
+            } else if let Some(n) = existing.as_i64().filter(|n| *n >= 0).map(|n| n as u64) {
+                if n >= *next_seq {
+                    *next_seq = n.saturating_add(1);
+                }
+            } else {
+                payload["sequence_number"] = json!(*next_seq);
+                *next_seq = next_seq.saturating_add(1);
+            }
+        } else {
+            payload["sequence_number"] = json!(*next_seq);
+            *next_seq = next_seq.saturating_add(1);
+        }
+    }
+    if payload == before {
+        return bytes;
+    }
+    let rewritten = match serde_json::to_string(&payload) {
+        Ok(s) => s,
+        Err(_) => return bytes,
+    };
+    let mut out = String::with_capacity(text.len() + 32);
+    for line in other_lines {
+        out.push_str(line);
+        out.push('\n');
+    }
+    if let Some(name) = event_name {
+        // other_lines already contains the event line when present
+        let _ = name;
+    }
+    out.push_str("data: ");
+    out.push_str(&rewritten);
+    out.push_str("\n\n");
+    Bytes::from(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -354,6 +441,34 @@ mod tests {
     fn sse_event_framing() {
         let ev = sse_event("response.created", json!({ "a": 1 }));
         assert_eq!(body(&ev), "event: response.created\ndata: {\"a\":1}\n\n");
+    }
+
+    #[test]
+    fn stamp_sse_event_bytes_adds_monotonic_sequence() {
+        let mut next = 0u64;
+        let first = stamp_sse_event_bytes(
+            sse_event(
+                "response.created",
+                json!({ "type": "response.created", "response": { "id": "r1" } }),
+            ),
+            &mut next,
+        );
+        let second = stamp_sse_event_bytes(
+            sse_event(
+                "response.output_text.delta",
+                json!({
+                    "type": "response.output_text.delta",
+                    "item_id": "m1",
+                    "output_index": 0,
+                    "content_index": 0,
+                    "delta": "hi"
+                }),
+            ),
+            &mut next,
+        );
+        assert!(body(&first).contains("\"sequence_number\":0"));
+        assert!(body(&second).contains("\"sequence_number\":1"));
+        assert_eq!(next, 2);
     }
 
     #[test]

@@ -14,11 +14,15 @@
 | `src/utils/providerModelsProbe.ts` | 探针目标解析（经 extractPortableCredentials 支持 Grok） |
 | `src/utils/copyProviderToApp.ts` | 跨应用复制到/从 Grok 的凭证与 TOML 生成 |
 | `src/components/providers/forms/GrokBuildProviderForm.tsx` | 编辑弹窗（已复用 CodexFormFields） |
-| `src-tauri/src/proxy/providers/transform_codex_chat.rs` | Chat→Responses usage 转换；`ensure_responses_usage_shape` |
+| `src-tauri/src/proxy/providers/codex_responses_sse.rs` | Responses SSE 事件构建；源端注入 `sequence_number` |
+| `src-tauri/src/proxy/providers/transform_codex_chat.rs` | Chat→Responses usage/error/sequence 形状；`ensure_responses_*` |
 | `src-tauri/src/proxy/providers/transform_codex_anthropic.rs` | Anthropic→Responses usage 转换，始终补 details |
 | `src-tauri/src/proxy/providers/streaming_codex_chat.rs` | 流式 Chat→Responses 默认 usage 补 details |
 | `src-tauri/src/proxy/providers/streaming_codex_anthropic.rs` | 流式 Anthropic→Responses 默认 usage 补 details |
-| `src-tauri/src/proxy/response_processor.rs` | Grok/Codex Responses 透传时归一化 JSON/SSE usage |
+| `src-tauri/src/proxy/response_processor.rs` | Grok/Codex Responses 透传时归一化 JSON/SSE usage、error 与 sequence_number；Chat/Anthropic 转换流复用 |
+| `src-tauri/src/proxy/handlers.rs` | Chat/Anthropic→Responses 流挂接 `create_responses_usage_normalized_stream` |
+| `src-tauri/src/grok_config.rs` | 代理接管强制 `api_backend=responses` |
+| `src-tauri/src/proxy/error.rs` | 通用 ProxyError 响应补齐 error.code/param |
 
 ## 关键符号
 
@@ -32,6 +36,12 @@
 - `needsRouting`
 - `ensure_responses_usage_shape`
 - `ensure_responses_payload_usage`
+- `normalize_proxy_error_body`
+- `ensure_responses_payload_error`
+- `ensure_responses_error_shape`
+- `ensure_responses_event_sequence_number`
+- `reset_sequence_numbers` / `sse_event`（转换源注入 sequence）
+- `rewrite_responses_sse_block`
 - `chat_usage_to_responses_usage`
 - `build_responses_usage_from_anthropic`
 - `needs_responses_usage_shape`
@@ -40,14 +50,14 @@
 ## 数据流
 
 1. 卡片快捷改 format → `applyProviderApiFormat`
-2. 写 `meta.apiFormat`；Grok 同步 `api_backend`
+2. 写 `meta.apiFormat`；Grok 客户端 `api_backend` 固定 `responses`（代理接管时强制）
 3. 卡片改模型 → `applyProviderModel`
 4. Grok 更新 TOML `model` / profile
 5. 获取模型 → `resolveProviderModelsProbeTarget` → `fetchModelsForConfig`
 6. 需路由徽章 → `providerNeedsRouting`
 7. 终端 Grok 请求 → 本地 `http://127.0.0.1:15721/grokbuild/v1`
 8. 上游返回 Responses 或经 Chat/Anthropic 转换回 Responses
-9. 转换层/透传层补齐 `usage.input_tokens_details` 后返回 Grok CLI
+9. 转换层/透传层补齐 `usage.input_tokens_details`、`error.code` 与 SSE `sequence_number` 后返回 Grok CLI
 
 ## 易冲突点
 
@@ -55,6 +65,8 @@
 - Grok TOML 字段名变化时同步改 `grokBuildConfig` / `providerQuickAdjust`
 - 不要把官方 OAuth 供应商误开快捷拉取
 - 上游若改 Responses usage 形状，需同步 `ensure_responses_usage_shape`
+- 上游若改 Responses error 形状，需同步 `ensure_responses_error_shape`
+- 上游若改 Responses SSE 事件信封，需同步 `ensure_responses_event_sequence_number` / `rewrite_responses_sse_block`
 - 透传归一化仅限 `codex` / `grokbuild`，避免影响 Claude/Gemini 热路径
 
 ## 验证命令
@@ -63,6 +75,6 @@
 pnpm exec vitest run src/utils/providerQuickAdjust.test.ts src/utils/copyProviderToApp.test.ts
 cd src-tauri
 cargo check -p cc-switch --lib
-cargo test --lib chat_usage_to_responses_always_emits_input_tokens_details ensure_responses_usage_shape_fills_missing_details
+cargo test --lib ensure_responses_event_sequence_number_fills_and_advances ensure_responses_usage_shape_fills_missing_details rewrite_responses_sse_block_adds_sequence_number
 ```
 

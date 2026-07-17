@@ -496,10 +496,16 @@ impl AnthropicToResponsesState {
             return None;
         }
         self.completed = true;
-        let mut error = json!({ "message": message });
-        if let Some(error_type) = error_type.filter(|value| !value.is_empty()) {
-            error["type"] = json!(error_type);
-        }
+        let error_type = error_type
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "upstream_error".to_string());
+        // Grok Build requires `code` on Responses error objects.
+        let error = json!({
+            "message": message,
+            "type": error_type,
+            "code": error_type,
+            "param": serde_json::Value::Null
+        });
         let mut output = self.output_items.clone();
         output.sort_by_key(|(output_index, _)| *output_index);
         let output: Vec<Value> = output.into_iter().map(|(_, item)| item).collect();
@@ -679,6 +685,7 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
         let mut utf8_remainder: Vec<u8> = Vec::new();
         let mut state = AnthropicToResponsesState::with_tool_context(tool_context);
         let mut stream_failed = false;
+        let mut next_seq: u64 = 0;
 
         tokio::pin!(stream);
 
@@ -694,7 +701,7 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
                         while let Some(block) = take_sse_block(&mut buffer) {
                             let (events, failed) = process_anthropic_sse_block(&mut state, &block);
                             for event in events {
-                                yield Ok(event);
+                                yield Ok(sse::stamp_sse_event_bytes(event, &mut next_seq));
                             }
                             if failed {
                                 stream_failed = true;
@@ -712,7 +719,7 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
                         format!("Stream error: {e}"),
                         Some("stream_error".to_string()),
                     ) {
-                        yield Ok(event);
+                        yield Ok(sse::stamp_sse_event_bytes(event, &mut next_seq));
                     }
                     stream_failed = true;
                     break;
@@ -731,7 +738,7 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
                             &body,
                             state.tool_context.clone(),
                         ) {
-                            yield Ok(event);
+                            yield Ok(sse::stamp_sse_event_bytes(event, &mut next_seq));
                         }
                         state.completed = true;
                     }
@@ -740,7 +747,7 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
             if !state.completed {
                 let (events, failed) = process_anthropic_sse_block(&mut state, &buffer);
                 for event in events {
-                    yield Ok(event);
+                    yield Ok(sse::stamp_sse_event_bytes(event, &mut next_seq));
                 }
                 stream_failed = failed;
             }
@@ -751,7 +758,7 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
                 // message_delta (stop_reason + final usage) arrived but the stream ended
                 // before message_stop; the turn is semantically complete, finalize normally.
                 for event in state.finalize() {
-                    yield Ok(event);
+                    yield Ok(sse::stamp_sse_event_bytes(event, &mut next_seq));
                 }
             } else if state.has_substantive_output() {
                 // Upstream truncated mid-stream (e.g. a proxy closed the connection without
@@ -760,7 +767,7 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
                 state.stop_reason = Some("max_tokens".to_string());
                 state.stream_truncated = true;
                 for event in state.finalize() {
-                    yield Ok(event);
+                    yield Ok(sse::stamp_sse_event_bytes(event, &mut next_seq));
                 }
             } else {
                 // Stream ended before any terminal signal or output: surface a failure.
@@ -768,7 +775,7 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
                     "Upstream Anthropic stream ended before message_stop".to_string(),
                     Some("stream_truncated".to_string()),
                 ) {
-                    yield Ok(event);
+                    yield Ok(sse::stamp_sse_event_bytes(event, &mut next_seq));
                 }
             }
         }

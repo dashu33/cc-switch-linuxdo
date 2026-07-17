@@ -250,6 +250,9 @@ pub fn apply_proxy_takeover(
     token_placeholder: &str,
 ) -> Result<String, AppError> {
     let updated = update_selected_model_string(config_toml, "base_url", proxy_base_url)?;
+    // Local proxy only serves /grokbuild/v1/responses. Upstream Chat/Anthropic
+    // conversion is driven by provider meta.apiFormat, not client api_backend.
+    let updated = update_selected_model_string(&updated, "api_backend", DEFAULT_API_BACKEND)?;
     update_selected_model_string(&updated, "api_key", token_placeholder)
 }
 
@@ -428,6 +431,7 @@ context_window = 500000
         let selected = extract_model_config(&updated).expect("updated selected model");
         assert_eq!(selected.base_url, "http://127.0.0.1:15721/grokbuild/v1");
         assert_eq!(selected.api_key.as_deref(), Some("PROXY_MANAGED"));
+        assert_eq!(selected.api_backend, "responses");
         assert!(has_proxy_placeholder(&updated, "PROXY_MANAGED"));
     }
 

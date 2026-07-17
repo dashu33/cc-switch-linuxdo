@@ -9,6 +9,7 @@ use super::{
     handler_context::{RequestContext, StreamingTimeoutConfig},
     hyper_client::ProxyResponse,
     providers::transform_codex_chat::{
+        ensure_responses_event_sequence_number, ensure_responses_payload_error,
         ensure_responses_payload_usage,
     },
     server::ProxyState,
@@ -254,6 +255,7 @@ pub async fn handle_non_streaming(
     if let Some(mut json_value) = parsed_json {
         if needs_responses_usage_shape(ctx.app_type_str) {
             ensure_responses_payload_usage(&mut json_value);
+            ensure_responses_payload_error(&mut json_value);
             if let Ok(normalized) = serde_json::to_vec(&json_value) {
                 body_bytes = Bytes::from(normalized);
                 strip_entity_headers_for_rebuilt_body(&mut response_headers);
@@ -365,7 +367,14 @@ fn needs_responses_usage_shape(app_type_str: &str) -> bool {
     matches!(app_type_str, "codex" | "grokbuild")
 }
 
-fn rewrite_responses_sse_block_usage(block: &str) -> Option<String> {
+/// Rewrite one Responses SSE block so Grok/Codex-required fields are present.
+///
+/// Returns `Some(rewritten)` when usage/error/`sequence_number` needed a fix.
+/// `next_seq` tracks the next sequence to assign across the stream.
+fn rewrite_responses_sse_block(
+    block: &str,
+    next_seq: &mut u64,
+) -> Option<String> {
     let mut event_name: Option<String> = None;
     let mut data_lines: Vec<String> = Vec::new();
     let mut other_lines: Vec<String> = Vec::new();
@@ -395,6 +404,8 @@ fn rewrite_responses_sse_block_usage(block: &str) -> Option<String> {
     let mut payload: Value = serde_json::from_str(&data).ok()?;
     let before = payload.clone();
     ensure_responses_payload_usage(&mut payload);
+    ensure_responses_payload_error(&mut payload);
+    ensure_responses_event_sequence_number(&mut payload, next_seq);
     if payload == before {
         return None;
     }
@@ -412,7 +423,12 @@ fn rewrite_responses_sse_block_usage(block: &str) -> Option<String> {
     Some(out)
 }
 
-fn create_responses_usage_normalized_stream<S, E>(
+/// Normalize Responses SSE for strict clients (Grok Build / some Codex builds):
+/// fill usage details, error envelopes, and monotonic `sequence_number`.
+///
+/// Public so Chat/Anthropic → Responses converter paths can share the same
+/// envelope fix without going through `process_response` passthrough.
+pub(crate) fn create_responses_usage_normalized_stream<S, E>(
     stream: S,
 ) -> impl Stream<Item = Result<Bytes, E>> + Send
 where
@@ -422,6 +438,7 @@ where
     async_stream::stream! {
         let mut buffer = String::new();
         let mut utf8_remainder = Vec::new();
+        let mut next_seq: u64 = 0;
         tokio::pin!(stream);
 
         while let Some(chunk) = stream.next().await {
@@ -430,7 +447,9 @@ where
                     append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
                     let mut out = String::new();
                     while let Some(event_text) = take_sse_block(&mut buffer) {
-                        if let Some(rewritten) = rewrite_responses_sse_block_usage(&event_text) {
+                        if let Some(rewritten) =
+                            rewrite_responses_sse_block(&event_text, &mut next_seq)
+                        {
                             out.push_str(&rewritten);
                         } else {
                             out.push_str(&event_text);
@@ -453,7 +472,9 @@ where
             utf8_remainder.clear();
         }
         if !buffer.is_empty() {
-            if let Some(rewritten) = rewrite_responses_sse_block_usage(buffer.trim_end()) {
+            if let Some(rewritten) =
+                rewrite_responses_sse_block(buffer.trim_end(), &mut next_seq)
+            {
                 yield Ok(Bytes::from(rewritten));
             } else {
                 yield Ok(Bytes::from(buffer));
@@ -957,6 +978,28 @@ mod tests {
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::RwLock;
+
+    #[test]
+    fn rewrite_responses_sse_block_adds_sequence_number() {
+        let mut next = 0u64;
+        let block = concat!(
+            "event: response.created\n",
+            r#"data: {"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}"#,
+            "\n"
+        );
+        let rewritten = rewrite_responses_sse_block(block, &mut next).expect("rewrite");
+        assert!(rewritten.contains("\"sequence_number\":0"));
+        assert_eq!(next, 1);
+
+        let block2 = concat!(
+            "event: response.output_text.delta\n",
+            r#"data: {"type":"response.output_text.delta","item_id":"m1","output_index":0,"content_index":0,"delta":"hi"}"#,
+            "\n"
+        );
+        let rewritten2 = rewrite_responses_sse_block(block2, &mut next).expect("rewrite2");
+        assert!(rewritten2.contains("\"sequence_number\":1"));
+        assert_eq!(next, 2);
+    }
 
     #[test]
     fn test_strip_sse_field_accepts_optional_space() {

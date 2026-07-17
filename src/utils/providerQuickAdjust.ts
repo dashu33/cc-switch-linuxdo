@@ -142,7 +142,12 @@ export function providerNeedsRouting(
 
 /**
  * Persist upstream format. Always writes meta.apiFormat.
- * Grok Build also mirrors the choice into native api_backend.
+ *
+ * Grok Build under CC Switch always talks to the local proxy via the
+ * Responses endpoint (`/grokbuild/v1/responses`). Chat/Anthropic selections
+ * only describe the *upstream* wire format for proxy conversion — the client
+ * side `api_backend` must stay `responses`, otherwise Grok hits a missing
+ * `/chat/completions` route on the proxy and conversion never runs.
  */
 export function applyProviderApiFormat(
   provider: Provider,
@@ -162,7 +167,8 @@ export function applyProviderApiFormat(
     const parsed = parseGrokBuildConfig(configText, next.name || "");
     settings.config = updateGrokBuildConfig(configText, {
       ...parsed,
-      apiBackend: grokApiBackendFromApiFormat(format),
+      // Client protocol to local proxy — always Responses.
+      apiBackend: "responses",
     });
     next.settingsConfig = settings;
   }

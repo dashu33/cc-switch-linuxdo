@@ -1715,6 +1715,127 @@ pub(crate) fn ensure_responses_payload_usage(payload: &mut Value) {
     }
 }
 
+/// Ensures Responses / OpenAI-style error objects always include `code` and
+/// `param`. Grok Build rejects incomplete error envelopes with:
+/// `serialization error: missing field `code``.
+pub(crate) fn ensure_responses_error_shape(error: &mut Value) {
+    if !error.is_object() {
+        let message = error
+            .as_str()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| error.to_string());
+        *error = json!({
+            "message": message,
+            "type": "upstream_error",
+            "code": "unknown_error",
+            "param": serde_json::Value::Null
+        });
+        return;
+    }
+
+    if error
+        .get("message")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true)
+    {
+        let message = error
+            .get("detail")
+            .and_then(|v| v.as_str())
+            .or_else(|| error.get("status_msg").and_then(|v| v.as_str()))
+            .unwrap_or("Upstream error");
+        error["message"] = json!(message);
+    }
+
+    if error
+        .get("type")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true)
+    {
+        error["type"] = json!("upstream_error");
+    }
+
+    // Prefer existing non-null code; otherwise synthesize a stable string code.
+    // Grok Build fails on a missing field; string codes are safest for strict clients.
+    let needs_code = match error.get("code") {
+        None => true,
+        Some(v) if v.is_null() => true,
+        Some(v) if v.as_str().map(|s| s.trim().is_empty()).unwrap_or(false) => true,
+        _ => false,
+    };
+    if needs_code {
+        let synthesized = error
+            .get("type")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("unknown_error");
+        error["code"] = json!(synthesized);
+    }
+
+    if !error.as_object().map(|o| o.contains_key("param")).unwrap_or(false) {
+        error["param"] = serde_json::Value::Null;
+    }
+}
+
+/// Normalize any Responses-shaped payload/event so nested `error` objects are
+/// complete enough for strict clients (Grok Build).
+pub(crate) fn ensure_responses_payload_error(payload: &mut Value) {
+    if let Some(error) = payload.get_mut("error") {
+        ensure_responses_error_shape(error);
+    }
+    if let Some(response) = payload.get_mut("response") {
+        if let Some(error) = response.get_mut("error") {
+            ensure_responses_error_shape(error);
+        }
+    }
+}
+
+/// Ensure a Responses SSE event payload includes a monotonic `sequence_number`.
+///
+/// Grok Build deserializes the stream as an internally-tagged
+/// `ResponseStreamEvent` where every variant requires `sequence_number`.
+/// Official OpenAI Responses streams always emit it; many gateways and our own
+/// Chat/Anthropic → Responses converters omit it, which produces:
+/// `serialization error: missing field `sequence_number``.
+///
+/// `next_seq` is the next number to assign when the field is missing. When an
+/// event already carries a numeric sequence, the counter advances past it so
+/// later synthesized values stay unique and non-decreasing.
+pub(crate) fn ensure_responses_event_sequence_number(payload: &mut Value, next_seq: &mut u64) {
+    let Some(obj) = payload.as_object() else {
+        return;
+    };
+    let Some(event_type) = obj.get("type").and_then(|v| v.as_str()) else {
+        return;
+    };
+    // Only touch Responses stream events. Usage collectors may parse bare
+    // response objects; leave non-event JSON alone.
+    if !event_type.starts_with("response.") {
+        return;
+    }
+
+    if let Some(existing) = obj.get("sequence_number") {
+        if let Some(n) = existing.as_u64() {
+            if n >= *next_seq {
+                *next_seq = n.saturating_add(1);
+            }
+            return;
+        }
+        if let Some(n) = existing.as_i64().filter(|n| *n >= 0).map(|n| n as u64) {
+            if n >= *next_seq {
+                *next_seq = n.saturating_add(1);
+            }
+            return;
+        }
+        // Present but unusable (null / string / bool) — overwrite below.
+    }
+
+    payload["sequence_number"] = json!(*next_seq);
+    *next_seq = next_seq.saturating_add(1);
+}
+
+
 pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
     let Some(usage) = usage.filter(|value| value.is_object() && !value.is_null()) else {
         return json!({
@@ -1826,7 +1947,7 @@ pub fn chat_error_to_response_error(body: Option<&Value>) -> Value {
             "error": {
                 "message": "Upstream returned an empty error response",
                 "type": "upstream_error",
-                "code": serde_json::Value::Null,
+                "code": "upstream_error",
                 "param": serde_json::Value::Null,
             }
         });
@@ -1837,7 +1958,7 @@ pub fn chat_error_to_response_error(body: Option<&Value>) -> Value {
             "error": {
                 "message": text,
                 "type": "upstream_error",
-                "code": serde_json::Value::Null,
+                "code": "upstream_error",
                 "param": serde_json::Value::Null,
             }
         });
@@ -1864,25 +1985,30 @@ pub fn chat_error_to_response_error(body: Option<&Value>) -> Value {
         .map(ToString::to_string)
         .unwrap_or_else(|| "upstream_error".to_string());
 
-    let code = source
+    let mut code = source
         .get("code")
         .cloned()
         .or_else(|| source.pointer("/base_resp/status_code").cloned())
         .unwrap_or(serde_json::Value::Null);
+    // Strict clients (Grok Build) require the field and reject pure absence; keep
+    // numeric codes when present, otherwise fall back to a non-empty string.
+    if code.is_null() {
+        code = json!(error_type.clone());
+    }
 
     let param = source
         .get("param")
         .cloned()
         .unwrap_or(serde_json::Value::Null);
 
-    json!({
-        "error": {
-            "message": message,
-            "type": error_type,
-            "code": code,
-            "param": param,
-        }
-    })
+    let mut error = json!({
+        "message": message,
+        "type": error_type,
+        "code": code,
+        "param": param,
+    });
+    ensure_responses_error_shape(&mut error);
+    json!({ "error": error })
 }
 
 #[cfg(test)]
@@ -2890,7 +3016,70 @@ mod tests {
         );
     }
 
+    
     #[test]
+    fn ensure_responses_error_shape_fills_missing_code() {
+        let mut error = json!({ "message": "boom" });
+        ensure_responses_error_shape(&mut error);
+        assert_eq!(error["message"], "boom");
+        assert_eq!(error["type"], "upstream_error");
+        assert_eq!(error["code"], "upstream_error");
+        assert!(error.get("param").is_some());
+
+        let mut event = json!({
+            "type": "response.failed",
+            "response": {
+                "status": "failed",
+                "error": { "message": "bad key", "type": "authentication_error" }
+            }
+        });
+        ensure_responses_payload_error(&mut event);
+        assert_eq!(
+            event["response"]["error"]["code"],
+            "authentication_error"
+        );
+    }
+
+    #[test]
+    fn ensure_responses_event_sequence_number_fills_and_advances() {
+        let mut next = 0u64;
+        let mut created = json!({
+            "type": "response.created",
+            "response": { "id": "resp_1", "status": "in_progress" }
+        });
+        ensure_responses_event_sequence_number(&mut created, &mut next);
+        assert_eq!(created["sequence_number"], 0);
+        assert_eq!(next, 1);
+
+        let mut delta = json!({
+            "type": "response.output_text.delta",
+            "item_id": "msg_1",
+            "output_index": 0,
+            "content_index": 0,
+            "delta": "hi"
+        });
+        ensure_responses_event_sequence_number(&mut delta, &mut next);
+        assert_eq!(delta["sequence_number"], 1);
+        assert_eq!(next, 2);
+
+        // Preserve upstream sequences and jump the counter past them.
+        let mut completed = json!({
+            "type": "response.completed",
+            "sequence_number": 9,
+            "response": { "id": "resp_1", "status": "completed" }
+        });
+        ensure_responses_event_sequence_number(&mut completed, &mut next);
+        assert_eq!(completed["sequence_number"], 9);
+        assert_eq!(next, 10);
+
+        // Non-event payloads are left alone.
+        let mut bare = json!({ "id": "resp_1", "usage": { "input_tokens": 1 } });
+        ensure_responses_event_sequence_number(&mut bare, &mut next);
+        assert!(bare.get("sequence_number").is_none());
+        assert_eq!(next, 10);
+    }
+
+#[test]
     fn chat_response_to_responses_maps_text_tool_calls_and_usage() {
         let input = json!({
             "id": "chatcmpl_1",
@@ -3224,7 +3413,7 @@ mod tests {
 
         assert_eq!(result["error"]["message"], "Upstream timeout");
         assert_eq!(result["error"]["type"], "upstream_error");
-        assert!(result["error"]["code"].is_null());
+        assert_eq!(result["error"]["code"], "upstream_error");
         assert!(result["error"]["param"].is_null());
     }
 

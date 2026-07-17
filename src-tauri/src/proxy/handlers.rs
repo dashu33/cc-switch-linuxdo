@@ -32,9 +32,9 @@ use super::{
         transform_responses,
     },
     response_processor::{
-        create_logged_passthrough_stream, process_response, read_decoded_body,
-        strip_entity_headers_for_rebuilt_body, strip_hop_by_hop_response_headers,
-        usage_logging_enabled, SseUsageCollector,
+        create_logged_passthrough_stream, create_responses_usage_normalized_stream,
+        process_response, read_decoded_body, strip_entity_headers_for_rebuilt_body,
+        strip_hop_by_hop_response_headers, usage_logging_enabled, SseUsageCollector,
     },
     server::ProxyState,
     sse::{strip_sse_field, take_sse_block},
@@ -1004,6 +1004,8 @@ async fn handle_codex_chat_to_responses_transform(
     if is_stream || response.is_sse() {
         let stream = response.bytes_stream();
         let sse_stream = create_responses_sse_stream_from_chat_with_context(stream, tool_context);
+        // Grok Build requires sequence_number / usage details on every event.
+        let sse_stream = create_responses_usage_normalized_stream(sse_stream);
         let sse_stream = record_responses_sse_stream(sse_stream, state.codex_chat_history.clone());
 
         let usage_collector = if usage_logging_enabled(state) {
@@ -1238,6 +1240,8 @@ async fn handle_codex_anthropic_to_responses_transform(
         let stream = response.bytes_stream();
         let sse_stream =
             create_responses_sse_stream_from_anthropic_with_context(stream, codex_tool_context);
+        // Same envelope normalization as Chat→Responses / passthrough for Grok.
+        let sse_stream = create_responses_usage_normalized_stream(sse_stream);
         return build_codex_anthropic_sse_response(
             sse_stream,
             ctx,

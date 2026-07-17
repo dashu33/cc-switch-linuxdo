@@ -40,7 +40,7 @@ describe("providerQuickAdjust global framework", () => {
     expect(supportsProviderQuickAdjust("gemini")).toBe(false);
   });
 
-  it("resolves and persists grok api format into api_backend", () => {
+  it("persists grok upstream format in meta while keeping client api_backend=responses", () => {
     const provider = makeGrokProvider();
     expect(resolveProviderApiFormat(provider, "grokbuild")).toBe(
       "openai_responses",
@@ -49,7 +49,11 @@ describe("providerQuickAdjust global framework", () => {
 
     const chat = applyProviderApiFormat(provider, "grokbuild", "openai_chat");
     expect(chat.meta?.apiFormat).toBe("openai_chat");
+    // Local proxy only exposes /grokbuild/v1/responses — client must stay Responses.
     expect(String(chat.settingsConfig.config)).toContain(
+      'api_backend = "responses"',
+    );
+    expect(String(chat.settingsConfig.config)).not.toContain(
       'api_backend = "chat_completions"',
     );
     expect(providerNeedsRouting(chat, "grokbuild")).toBe(true);
@@ -59,8 +63,9 @@ describe("providerQuickAdjust global framework", () => {
       "grokbuild",
       "anthropic",
     );
+    expect(anthropic.meta?.apiFormat).toBe("anthropic");
     expect(String(anthropic.settingsConfig.config)).toContain(
-      'api_backend = "messages"',
+      'api_backend = "responses"',
     );
     expect(providerNeedsRouting(anthropic, "grokbuild")).toBe(true);
   });
