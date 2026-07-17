@@ -35,6 +35,7 @@ mod settings;
 mod store;
 
 mod tray;
+mod window_focus;
 mod usage_events;
 mod usage_script;
 
@@ -69,7 +70,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use tauri::image::Image;
-use tauri::tray::{TrayIconBuilder, TrayIconEvent};
+use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::RunEvent;
 use tauri::{Emitter, Manager};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
@@ -156,16 +157,8 @@ fn handle_deeplink_url(
             }
 
             if focus_main_window {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.unminimize();
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                    #[cfg(target_os = "linux")]
-                    {
-                        linux_fix::nudge_main_window(window.clone());
-                    }
-                    log::info!("✓ Window shown and focused");
-                }
+                window_focus::show_main_window(app);
+                log::info!("✓ Window shown and focused");
             }
         }
         Err(e) => {
@@ -257,15 +250,7 @@ pub fn run() {
             }
 
             // Show and focus window regardless
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-                #[cfg(target_os = "linux")]
-                {
-                    linux_fix::nudge_main_window(window.clone());
-                }
-            }
+            window_focus::show_main_window(app);
         }));
     }
 
@@ -435,10 +420,7 @@ pub fn run() {
                         supported_version: Some(crate::database::SCHEMA_VERSION),
                     });
                     // 主窗口默认 visible:false，恢复界面必须强制显示
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
+                    window_focus::show_main_window(app.handle());
                     return Ok(());
                 }
                 Ok(None) => {}
@@ -903,7 +885,7 @@ pub fn run() {
             let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
                 .tooltip("CC Switch") // 鼠标悬停提示
                 .on_tray_icon_event(|tray, event| match event {
-                    // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
+                    // 鼠标悬停/单击托盘图标时，后台异步刷新用量缓存，
                     // 让用户下一次（或快速打开菜单的那一刻）看到较新的数字。
                     // refresh_all_usage_in_tray 内部有 10 秒防抖。
                     TrayIconEvent::Enter { .. } | TrayIconEvent::Click { .. } => {
@@ -911,6 +893,14 @@ pub fn run() {
                         tauri::async_runtime::spawn(async move {
                             crate::tray::refresh_all_usage_in_tray(&app).await;
                         });
+                    }
+                    // Windows only：双击托盘图标直接打开并前置主窗口。
+                    // macOS/Linux 无 DoubleClick 事件，仍走菜单「打开主界面」或单击菜单。
+                    TrayIconEvent::DoubleClick {
+                        button: MouseButton::Left,
+                        ..
+                    } => {
+                        window_focus::show_main_window(tray.app_handle());
                     }
                     _ => log::debug!("unhandled event {event:?}"),
                 })
@@ -1582,20 +1572,7 @@ pub fn run() {
             match event {
                 // macOS 在 Dock 图标被点击并重新激活应用时会触发 Reopen 事件，这里手动恢复主窗口
                 RunEvent::Reopen { .. } => {
-                    if let Some(window) = app_handle.get_webview_window("main") {
-                        #[cfg(target_os = "windows")]
-                        {
-                            let _ = window.set_skip_taskbar(false);
-                        }
-                        let _ = window.unminimize();
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                        tray::apply_tray_policy(app_handle, true);
-                    } else if crate::lightweight::is_lightweight_mode() {
-                        if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle) {
-                            log::error!("退出轻量模式重建窗口失败: {e}");
-                        }
-                    }
+                    window_focus::show_main_window(app_handle);
                 }
                 // 处理通过自定义 URL 协议触发的打开事件（例如 ccswitch://...）
                 RunEvent::Opened { urls } => {
@@ -1648,11 +1625,7 @@ pub fn run() {
                             }
 
                             // 确保主窗口可见
-                            if let Some(window) = app_handle.get_webview_window("main") {
-                                let _ = window.unminimize();
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
+                            window_focus::show_main_window(app_handle);
                         }
                     }
                 }
