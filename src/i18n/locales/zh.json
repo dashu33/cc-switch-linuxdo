@@ -252,6 +252,27 @@
     "filter": "筛选",
     "filterProviders": "筛选供应商",
     "filterByProbeStatus": "拉取状态",
+    "filterByFailureReason": "失败原因",
+    "failureReason": {
+      "all": "全部原因",
+      "config": "配置缺失",
+      "api_key": "API Key 错误",
+      "auth": "鉴权失败",
+      "rate_limit": "请求限流",
+      "endpoint": "端点不可用",
+      "timeout": "请求超时",
+      "response": "响应格式异常",
+      "network": "网络连接失败",
+      "server": "服务端错误",
+      "unknown": "其他或旧记录"
+    },
+    "cleanupByStatus": "一键清理此状态（{{count}}）",
+    "cleanupByStatusConfirmTitle": "按状态清理供应商",
+    "cleanupByStatusConfirmMessage": "将永久删除 {{count}} 个“{{status}}”状态的供应商，此操作无法撤销。",
+    "cleanupByStatusConfirmMessageWithReason": "将永久删除 {{count}} 个“{{status}} / {{reason}}”状态的供应商，此操作无法撤销。",
+    "cleanupByStatusConfirmCheck": "我已确认这些供应商可删除，且操作无法撤销",
+    "confirmCleanupByStatus": "确认清理",
+    "cleaningByStatus": "清理中…",
     "filterByModel": "模型",
     "filterModelPlaceholder": "如 gpt / claude / qwen",
     "clearFilters": "清除筛选",
@@ -346,6 +367,8 @@
     "updateFailed": "更新供应商失败：{{error}}",
     "deleteSuccess": "供应商已删除",
     "deleteFailed": "删除供应商失败：{{error}}",
+    "batchDeleteSuccess": "已清理 {{count}} 个供应商",
+    "batchDeleteFailed": "{{count}} 个供应商清理失败",
     "settingsSaved": "设置已保存",
     "settingsSaveFailed": "保存设置失败：{{error}}",
     "proxyRequiredForSwitch": "此供应商{{reason}}，需要路由服务才能正常使用，请先启动路由",
@@ -3072,8 +3095,3 @@
     "refresh": "刷新"
   }
 }
-
-
-
-
-

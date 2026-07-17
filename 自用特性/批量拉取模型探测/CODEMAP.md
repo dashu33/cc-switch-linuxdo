@@ -9,13 +9,15 @@
 | `src/hooks/useFetchCurrentProviderModels.ts`            | 批量探测核心、60s 瞬时态、按应用持久化 `probeHistoryById`                            |
 | `src/hooks/useFetchCurrentProviderModels.test.ts`       | 持久化解析、终态过滤与按应用隔离测试                                                 |
 | `src/utils/providerModelsProbe.ts`                      | `resolveProviderModelsProbeTarget` 解析/跳过                                         |
-| `src/lib/api/model-fetch.ts`                            | `fetchModelsForConfig` / `showFetchModelsError`                                      |
+| `src/lib/api/model-fetch.ts`                            | 拉取 API、错误提示及 `classifyFetchModelsError` 稳定失败分类                         |
+| `src/lib/api/model-fetch.test.ts`                       | 失败原因分类回归                                                                      |
+| `src/hooks/useProviderActions.ts`                       | 按筛选状态批量删除供应商并集中刷新缓存/托盘                                           |
 | `src/utils/copyProviderToApp.ts`                        | `extractPortableCredentials`（凭证抽取）                                             |
 | `src/App.tsx`                                           | 组装 Radar 探测、Search 搜索按钮并通过 `toolbarActions` 传入列表；两类探测状态传列表 |
-| `src/components/providers/ProviderList.tsx`             | sticky 子菜单操作区；瞬时/持久状态按 ID 分发；通用滚动定位；搜索 Enter 定位          |
+| `src/components/providers/ProviderList.tsx`             | 状态/失败原因筛选、按状态确认清理；瞬时/持久状态分发；搜索定位                         |
 | `src/components/providers/ProviderCard.tsx`             | 瞬时边框；右上角绝对定位的 CircleCheck/CircleX/CircleMinus                           |
 | `tests/components/ProviderList.test.tsx`                | 历史状态按 ID 接线、搜索打开与 Enter 定位高亮                                        |
-| `src/components/providers/CodexProviderQuickAdjust.tsx` | 同步批量结果 → 「获取」按钮色                                                        |
+| `src/components/providers/CodexProviderQuickAdjust.tsx` | 同步批量结果 → 「获取」按钮色；按钮右侧展示持久失败原因                              |
 | `src/i18n/locales/*.json`                               | `provider.fetchModels*`                                                              |
 | `自用特性/批量拉取模型探测/*`                           | 本文档                                                                               |
 
@@ -64,6 +66,7 @@ useFetchCurrentProviderModels(appId, providers, currentProviderId)
       probeResult,
       probeById,
       probeHistoryById,
+      forgetProviderProbeResults,
     }
 ```
 
@@ -88,6 +91,12 @@ Batch complete
   → commitProbeHistory()
   → localStorage per app
   → ProviderCard top-right persistent status icon
+  → CodexProviderQuickAdjust modelsProbeReason → 按钮右侧原因文案
+
+Failure cleanup (not for success)
+  → ProviderList status + optional failure reason
+  → ConfirmDialog → deleteProviders
+  → forgetProviderProbeResults(deletedIds)
 ```
 
 ## 汇总色规则（子菜单探测按钮）
@@ -125,3 +134,6 @@ rg -n "probeHistoryById|modelsProbeHistoryStatus|openSearch|scrollToProvider" sr
 - [ ] 新一轮完成后原子覆盖历史结果
 - [ ] 搜索 Enter 复用通用定位并高亮
 - [ ] 单卡手动获取仍可用且着色
+- [ ] 失败原因筛选与按状态清理数量正确；删除后历史同步移除
+- [ ] modelsProbeReason 经 ProviderList → ProviderCard → CodexProviderQuickAdjust 贯通
+- [ ] 失败确认框在叠加原因筛选时展示 reason 文案

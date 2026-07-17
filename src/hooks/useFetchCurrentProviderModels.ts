@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import {
+  classifyFetchModelsError,
   fetchModelsForConfig,
   showFetchModelsError,
 } from "@/lib/api/model-fetch";
@@ -255,6 +256,7 @@ export function useFetchCurrentProviderModels(
           entry: {
             status: "failed",
             at: Date.now(),
+            reason: classifyFetchModelsError(err),
           },
         };
       }
@@ -311,14 +313,15 @@ export function useFetchCurrentProviderModels(
       setProbeById((prev) => ({ ...prev, ...initial }));
       setProbeResult({
         status: "probing",
-        providerId: list.length === 1 ? list[0]?.id ?? null : null,
+        providerId: list.length === 1 ? (list[0]?.id ?? null) : null,
         at: Date.now(),
         totalCount: list.length,
         successCount: 0,
         emptyCount: 0,
         failedCount: 0,
-        skippedCount: Object.values(initial).filter((e) => e.status === "skipped")
-          .length,
+        skippedCount: Object.values(initial).filter(
+          (e) => e.status === "skipped",
+        ).length,
       });
 
       const probeable = list.filter((p) => initial[p.id]?.status === "probing");
@@ -381,7 +384,7 @@ export function useFetchCurrentProviderModels(
 
         setProbeResult({
           status: summary,
-          providerId: list.length === 1 ? list[0]?.id ?? null : null,
+          providerId: list.length === 1 ? (list[0]?.id ?? null) : null,
           at: Date.now(),
           modelCount: totalModels,
           successCount,
@@ -420,7 +423,7 @@ export function useFetchCurrentProviderModels(
         }
         setProbeResult({
           status: "failed",
-          providerId: list.length === 1 ? list[0]?.id ?? null : null,
+          providerId: list.length === 1 ? (list[0]?.id ?? null) : null,
           at: Date.now(),
           totalCount: list.length,
         });
@@ -596,7 +599,7 @@ export function useFetchCurrentProviderModels(
         toast.info(
           t("provider.fetchModelsAllSkipped", {
             skipped: skippedCount,
-            defaultValue: `没有可探测的供应商（已跳过 ${skippedCount} 个官方/OAuth/缺配置项）`,
+            defaultValue: `没有可探测的供应商（已跳过 ${skippedCount} 个 OAuth/缺配置项）`,
           }),
         );
         return;
@@ -691,6 +694,26 @@ export function useFetchCurrentProviderModels(
     [commitPartialHistory],
   );
 
+  const forgetProviderProbeResults = useCallback(
+    (providerIds: string[]) => {
+      const ids = new Set(providerIds.filter(Boolean));
+      if (ids.size === 0) return;
+      setProbeById((previous) =>
+        Object.fromEntries(
+          Object.entries(previous).filter(([id]) => !ids.has(id)),
+        ),
+      );
+      setProbeHistoryById((previous) => {
+        const next = Object.fromEntries(
+          Object.entries(previous).filter(([id]) => !ids.has(id)),
+        );
+        saveModelsProbeHistory(appId, next);
+        return next;
+      });
+    },
+    [appId],
+  );
+
   return {
     isFetching,
     fetchCurrentProviderModels,
@@ -699,7 +722,6 @@ export function useFetchCurrentProviderModels(
     probeResult,
     probeById,
     probeHistoryById,
+    forgetProviderProbeResults,
   };
 }
-
-

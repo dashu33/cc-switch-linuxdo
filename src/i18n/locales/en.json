@@ -252,6 +252,27 @@
     "filter": "Filter",
     "filterProviders": "Filter providers",
     "filterByProbeStatus": "Probe status",
+    "filterByFailureReason": "Failure reason",
+    "failureReason": {
+      "all": "All reasons",
+      "config": "Missing config",
+      "api_key": "API key error",
+      "auth": "Authentication",
+      "rate_limit": "Rate limited",
+      "endpoint": "Endpoint unavailable",
+      "timeout": "Timed out",
+      "response": "Invalid response",
+      "network": "Network failure",
+      "server": "Server error",
+      "unknown": "Other or legacy"
+    },
+    "cleanupByStatus": "Clear this status ({{count}})",
+    "cleanupByStatusConfirmTitle": "Clear providers by status",
+    "cleanupByStatusConfirmMessage": "This will permanently delete {{count}} providers with the “{{status}}” status. This action cannot be undone.",
+    "cleanupByStatusConfirmMessageWithReason": "This will permanently delete {{count}} providers with the “{{status}} / {{reason}}” status. This action cannot be undone.",
+    "cleanupByStatusConfirmCheck": "I understand these providers will be permanently deleted",
+    "confirmCleanupByStatus": "Confirm clear",
+    "cleaningByStatus": "Clearing…",
     "filterByModel": "Model",
     "filterModelPlaceholder": "e.g. gpt / claude / qwen",
     "clearFilters": "Clear filters",
@@ -346,6 +367,8 @@
     "updateFailed": "Failed to update provider: {{error}}",
     "deleteSuccess": "Provider deleted",
     "deleteFailed": "Failed to delete provider: {{error}}",
+    "batchDeleteSuccess": "Cleared {{count}} providers",
+    "batchDeleteFailed": "Failed to clear {{count}} providers",
     "settingsSaved": "Settings saved",
     "settingsSaveFailed": "Failed to save settings: {{error}}",
     "proxyRequiredForSwitch": "This provider {{reason}}, requires the routing service to work properly. Start routing first.",
@@ -3072,8 +3095,3 @@
     "refresh": "Refresh"
   }
 }
-
-
-
-
-

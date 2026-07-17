@@ -22,9 +22,20 @@ const CODEX_QUICK_ADJUST_TSX = path.resolve(
   "CodexProviderQuickAdjust.tsx",
 );
 
+const PROVIDER_ACTIONS_TSX = path.resolve(
+  __dirname,
+  "..",
+  "..",
+  "src",
+  "components",
+  "providers",
+  "ProviderActions.tsx",
+);
+
 describe("ProviderCard layout", () => {
   const source = fs.readFileSync(PROVIDER_CARD_TSX, "utf8");
   const quickAdjust = fs.readFileSync(CODEX_QUICK_ADJUST_TSX, "utf8");
+  const actions = fs.readFileSync(PROVIDER_ACTIONS_TSX, "utf8");
 
   it("lets website links use available card width before truncating", () => {
     expect(source).not.toContain("max-w-[280px]");
@@ -58,5 +69,28 @@ describe("ProviderCard layout", () => {
       codexIdx,
     );
     expect(nestedSummaryIdx).toBeGreaterThan(codexIdx);
+  });
+
+  it("keeps inline model fetching visible for Codex and the Claude family", () => {
+    expect(source).toContain("const hasInlineQuickAdjust =");
+    expect(source).toContain('appId === "codex"');
+    expect(source).toContain('appId === "claude"');
+    expect(source).toContain('appId === "claude-desktop"');
+    expect(source).toContain("hasInlineQuickAdjust && onUpdate");
+    expect(source).toContain("appId={appId}");
+  });
+
+  it("widens the recent-calls column and contains hover actions inside it", () => {
+    expect(source.match(/sm:w-\[360px\] xl:w-\[400px\]/g)).toHaveLength(2);
+    expect(source).toContain("w-[calc(100%-1rem)]");
+    expect(actions).toContain(
+      "flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1.5",
+    );
+  });
+
+  it("wires modelsProbeReason into CodexProviderQuickAdjust", () => {
+    expect(source).toContain("modelsProbeReason={modelsProbeReason}");
+    expect(quickAdjust).toContain("modelsProbeReason");
+    expect(quickAdjust).toContain("fetchFailureReasonLabel");
   });
 });

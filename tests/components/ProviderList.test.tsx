@@ -1,4 +1,10 @@
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  act,
+  waitFor,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createRef, type ReactElement } from "react";
@@ -344,9 +350,61 @@ describe("ProviderList Component", () => {
     fireEvent.change(reopenedSearchInput, { target: { value: "gamma" } });
     expect(screen.queryByTestId("provider-card-alpha")).not.toBeInTheDocument();
     expect(screen.queryByTestId("provider-card-beta")).not.toBeInTheDocument();
+    expect(screen.getByText("没有符合搜索条件的供应商。")).toBeInTheDocument();
+  });
+
+  it("filters failed providers by reason and cleans the selected status", async () => {
+    const auth = createProvider({ id: "auth", name: "Auth Failed" });
+    const timeout = createProvider({ id: "timeout", name: "Timed Out" });
+    const healthy = createProvider({ id: "healthy", name: "Healthy" });
+    const handleBulkDelete = vi.fn().mockResolvedValue(undefined);
+
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [auth, timeout, healthy],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ auth, timeout, healthy }}
+        currentProviderId=""
+        appId="claude"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onBulkDelete={handleBulkDelete}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+        modelsProbeHistoryById={{
+          auth: { status: "failed", at: 10, reason: "auth" },
+          timeout: { status: "failed", at: 11, reason: "timeout" },
+          healthy: { status: "success", at: 12 },
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "筛选供应商" }));
+    fireEvent.click(screen.getByRole("button", { name: "失败" }));
+    expect(screen.getByTestId("provider-card-auth")).toBeInTheDocument();
+    expect(screen.getByTestId("provider-card-timeout")).toBeInTheDocument();
     expect(
-      screen.getByText("没有符合搜索条件的供应商。"),
-    ).toBeInTheDocument();
+      screen.queryByTestId("provider-card-healthy"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "鉴权失败 1" }));
+    expect(screen.getByTestId("provider-card-auth")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("provider-card-timeout"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "一键清理此状态（1）" }),
+    );
+    expect(screen.getByText(/将永久删除 1 个/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "确认清理" }));
+
+    await waitFor(() => expect(handleBulkDelete).toHaveBeenCalledWith([auth]));
   });
 
   it("persists a view sort mode and disables dragging outside custom order", () => {

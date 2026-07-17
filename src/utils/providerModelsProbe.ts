@@ -17,7 +17,7 @@ export type ResolveProviderModelsProbeResult =
       ok: false;
       reason:
         | "no_current"
-        | "official"
+        | "official" // 兼容历史 history；现网不再产生
         | "oauth_special"
         | "missing_config"
         | "missing_base_url"
@@ -27,7 +27,9 @@ export type ResolveProviderModelsProbeResult =
 
 /**
  * 从当前供应商配置解析出 /models 探测所需的 baseUrl + apiKey。
- * 官方 / OAuth 专用供应商不走通用 /v1/models。
+ *
+ * 不再因 category === "official" 硬跳过：自用/第三方转发常见「官方分类 + 自定义 baseUrl/key」。
+ * 真·官方（无 baseUrl/key）会落到 missing_*；OAuth 专用类型仍跳过。
  */
 export function resolveProviderModelsProbeTarget(
   provider: Provider | undefined | null,
@@ -35,14 +37,6 @@ export function resolveProviderModelsProbeTarget(
 ): ResolveProviderModelsProbeResult {
   if (!provider) {
     return { ok: false, reason: "no_current" };
-  }
-
-  if (provider.category === "official") {
-    return {
-      ok: false,
-      reason: "official",
-      providerName: provider.name,
-    };
   }
 
   if (

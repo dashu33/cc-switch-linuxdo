@@ -7,6 +7,83 @@ export interface FetchedModel {
   ownedBy: string | null;
 }
 
+export type FetchModelsFailureReason =
+  | "config"
+  | "api_key"
+  | "auth"
+  | "rate_limit"
+  | "endpoint"
+  | "timeout"
+  | "response"
+  | "network"
+  | "server"
+  | "unknown";
+
+/**
+ * Convert backend/request errors into stable, non-sensitive categories.
+ * Probe history persists only this category, never the raw error string.
+ */
+export function classifyFetchModelsError(
+  err: unknown,
+  opts?: { hasApiKey: boolean; hasBaseUrl: boolean },
+): FetchModelsFailureReason {
+  // Prefer a dedicated API key category over generic "config".
+  if (opts && !opts.hasApiKey) return "api_key";
+  if (opts && !opts.hasBaseUrl) return "config";
+
+  const message = String(err).toLowerCase();
+  // Missing/invalid API key phrasing (backend may not always send HTTP status).
+  if (
+    message.includes("api key") ||
+    message.includes("apikey") ||
+    message.includes("api_key") ||
+    message.includes("invalid_api_key") ||
+    message.includes("incorrect_api_key") ||
+    message.includes("invalid key") ||
+    message.includes("incorrect api") ||
+    message.includes("missing api key") ||
+    message.includes("unauthorized: api") ||
+    (message.includes("authentication_error") && message.includes("key")) ||
+    message.includes("密钥无效") ||
+    message.includes("密钥错误") ||
+    message.includes("api密钥")
+  ) {
+    return "api_key";
+  }
+  if (/http\s+(401|403)\b/.test(message)) return "auth";
+  if (/http\s+429\b/.test(message) || message.includes("rate limit")) {
+    return "rate_limit";
+  }
+  if (
+    message.includes("all candidates failed") ||
+    /http\s+(404|405)\b/.test(message)
+  ) {
+    return "endpoint";
+  }
+  if (message.includes("timeout") || message.includes("timed out")) {
+    return "timeout";
+  }
+  if (
+    message.includes("failed to parse") ||
+    message.includes("invalid json") ||
+    message.includes("deserialize")
+  ) {
+    return "response";
+  }
+  if (/http\s+5\d\d\b/.test(message)) return "server";
+  if (
+    message.includes("network") ||
+    message.includes("connection") ||
+    message.includes("connect error") ||
+    message.includes("dns") ||
+    message.includes("resolve host") ||
+    message.includes("request failed")
+  ) {
+    return "network";
+  }
+  return "unknown";
+}
+
 /**
  * 从供应商获取可用模型列表
  *
@@ -64,27 +141,29 @@ export function showFetchModelsError(
     return;
   }
 
-  // 解析后端错误字符串
-  const msg = String(err);
+  const reason = classifyFetchModelsError(err, opts);
 
-  if (msg.includes("HTTP 401") || msg.includes("HTTP 403")) {
+  if (reason === "api_key") {
+    toast.error(
+      t("providerForm.fetchModelsNeedApiKey", {
+        defaultValue: t("providerForm.fetchModelsAuthFailed"),
+      }),
+    );
+    return;
+  }
+  if (reason === "auth") {
     toast.error(t("providerForm.fetchModelsAuthFailed"));
     return;
   }
-  // 所有候选端点均返回 404/405：供应商可能未开放 /models 接口，或 Base URL 有误
-  if (msg.includes("All candidates failed")) {
+  if (reason === "endpoint") {
     toast.error(t("providerForm.fetchModelsEndpointNotFound"));
     return;
   }
-  if (msg.includes("HTTP 404") || msg.includes("HTTP 405")) {
-    toast.error(t("providerForm.fetchModelsEndpointNotFound"));
-    return;
-  }
-  if (msg.includes("timeout") || msg.includes("timed out")) {
+  if (reason === "timeout") {
     toast.error(t("providerForm.fetchModelsTimeout"));
     return;
   }
-  if (msg.includes("Failed to parse")) {
+  if (reason === "response") {
     toast.error(t("providerForm.fetchModelsNotSupported"));
     return;
   }

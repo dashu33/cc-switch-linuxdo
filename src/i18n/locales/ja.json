@@ -252,6 +252,27 @@
     "filter": "絞り込み",
     "filterProviders": "プロバイダーを絞り込み",
     "filterByProbeStatus": "取得ステータス",
+    "filterByFailureReason": "失敗理由",
+    "failureReason": {
+      "all": "すべての理由",
+      "config": "設定不足",
+      "api_key": "APIキーエラー",
+      "auth": "認証失敗",
+      "rate_limit": "レート制限",
+      "endpoint": "エンドポイント無効",
+      "timeout": "タイムアウト",
+      "response": "応答形式エラー",
+      "network": "ネットワーク失敗",
+      "server": "サーバーエラー",
+      "unknown": "その他・旧データ"
+    },
+    "cleanupByStatus": "この状態を一括削除（{{count}}）",
+    "cleanupByStatusConfirmTitle": "状態別にプロバイダーを削除",
+    "cleanupByStatusConfirmMessage": "「{{status}}」状態のプロバイダー {{count}} 件を完全に削除します。この操作は元に戻せません。",
+    "cleanupByStatusConfirmMessageWithReason": "「{{status}} / {{reason}}」状態のプロバイダー {{count}} 件を完全に削除します。この操作は元に戻せません。",
+    "cleanupByStatusConfirmCheck": "これらのプロバイダーを完全に削除してよいことを確認しました",
+    "confirmCleanupByStatus": "削除を確認",
+    "cleaningByStatus": "削除中…",
     "filterByModel": "モデル",
     "filterModelPlaceholder": "例: gpt / claude / qwen",
     "clearFilters": "絞り込みを解除",
@@ -346,6 +367,8 @@
     "updateFailed": "プロバイダーの更新に失敗しました: {{error}}",
     "deleteSuccess": "プロバイダーを削除しました",
     "deleteFailed": "プロバイダーの削除に失敗しました: {{error}}",
+    "batchDeleteSuccess": "{{count}} 件のプロバイダーを削除しました",
+    "batchDeleteFailed": "{{count}} 件のプロバイダーを削除できませんでした",
     "settingsSaved": "設定を保存しました",
     "settingsSaveFailed": "設定の保存に失敗しました: {{error}}",
     "proxyRequiredForSwitch": "このプロバイダーは{{reason}}、ルーティングサービスが必要です。先にルーティングを起動してください",
@@ -3072,8 +3095,3 @@
     "refresh": "更新"
   }
 }
-
-
-
-
-

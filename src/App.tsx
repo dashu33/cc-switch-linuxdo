@@ -314,6 +314,7 @@ function App() {
     probeResult: modelsProbeResult,
     probeById: modelsProbeById,
     probeHistoryById: modelsProbeHistoryById,
+    forgetProviderProbeResults,
   } = useFetchCurrentProviderModels(activeApp, providers, currentProviderId);
 
   const scheduleAutoProbeProviders = useCallback(
@@ -382,6 +383,7 @@ function App() {
     updateProvider,
     switchProvider,
     deleteProvider,
+    deleteProviders,
     saveUsageScript,
     setAsDefaultModel,
   } = useProviderActions(
@@ -1440,6 +1442,12 @@ function App() {
                       onDelete={(provider) =>
                         setConfirmAction({ provider, action: "delete" })
                       }
+                      onBulkDelete={async (targets) => {
+                        const deletedIds = await deleteProviders(
+                          targets.map((provider) => provider.id),
+                        );
+                        forgetProviderProbeResults(deletedIds);
+                      }}
                       onRemoveFromConfig={
                         activeApp === "opencode" ||
                         activeApp === "openclaw" ||
@@ -2184,6 +2192,3 @@ function App() {
 }
 
 export default App;
-
-
-

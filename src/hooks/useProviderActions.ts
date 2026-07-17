@@ -20,6 +20,7 @@ import {
 import { usageKeys } from "@/lib/query/usage";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { openclawKeys } from "@/hooks/useOpenClaw";
+import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
 import {
   extractCodexWireApi,
   isCodexAnthropicWireApi,
@@ -322,6 +323,76 @@ export function useProviderActions(
     [deleteProviderMutation],
   );
 
+  // 按筛选状态批量清理：逐条调用现有删除 API，但只刷新一次缓存/托盘并汇总提示。
+  const deleteProviders = useCallback(
+    async (ids: string[]): Promise<string[]> => {
+      const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+      const deletedIds: string[] = [];
+      const failures: unknown[] = [];
+
+      for (const id of uniqueIds) {
+        try {
+          await providersApi.delete(id, activeApp);
+          deletedIds.push(id);
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+
+      if (deletedIds.length > 0) {
+        await queryClient.invalidateQueries({
+          queryKey: ["providers", activeApp],
+        });
+        if (activeApp === "opencode") {
+          await Promise.all([
+            queryClient.invalidateQueries({
+              queryKey: ["omo", "current-provider-id"],
+            }),
+            queryClient.invalidateQueries({
+              queryKey: ["omo", "provider-count"],
+            }),
+            queryClient.invalidateQueries({
+              queryKey: ["omo-slim", "current-provider-id"],
+            }),
+            queryClient.invalidateQueries({
+              queryKey: ["omo-slim", "provider-count"],
+            }),
+          ]);
+        } else if (activeApp === "openclaw") {
+          await queryClient.invalidateQueries({
+            queryKey: openclawKeys.health,
+          });
+        } else if (activeApp === "hermes") {
+          await invalidateHermesProviderCaches(queryClient);
+        }
+        try {
+          await providersApi.updateTrayMenu();
+        } catch (error) {
+          console.error("Failed to update tray menu after batch delete", error);
+        }
+        toast.success(
+          t("notifications.batchDeleteSuccess", {
+            count: deletedIds.length,
+            defaultValue: `已清理 ${deletedIds.length} 个供应商`,
+          }),
+          { closeButton: true },
+        );
+      }
+
+      if (failures.length > 0) {
+        toast.error(
+          t("notifications.batchDeleteFailed", {
+            count: failures.length,
+            defaultValue: `${failures.length} 个供应商清理失败`,
+          }),
+          { closeButton: true },
+        );
+      }
+      return deletedIds;
+    },
+    [activeApp, queryClient, t],
+  );
+
   // 保存用量脚本
   const saveUsageScript = useCallback(
     async (provider: Provider, script: UsageScript) => {
@@ -413,6 +484,7 @@ export function useProviderActions(
     updateProvider,
     switchProvider,
     deleteProvider,
+    deleteProviders,
     saveUsageScript,
     setAsDefaultModel,
     isLoading:

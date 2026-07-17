@@ -103,16 +103,17 @@ interface ProviderCardProps {
   modelsProbeStatus?: ModelsProbeStatus;
   /** 最近一次完成的批量探测结果：右侧悬浮状态图标 */
   modelsProbeHistoryStatus?: ModelsProbeStatus;
+  /** 最近一次失败/跳过原因（稳定分类码，可持久） */
+  modelsProbeReason?: string;
   /** 最近一次探测到的模型 id 列表（用于行内 brand LOGO） */
   modelsProbeModelIds?: string[];
   /** 行内「获取」完成后写入持久探测历史 */
-  onModelsProbeResult?: (
-    entry: {
-      status: ModelsProbeStatus;
-      modelCount?: number;
-      modelIds?: string[];
-    },
-  ) => void;
+  onModelsProbeResult?: (entry: {
+    status: ModelsProbeStatus;
+    modelCount?: number;
+    modelIds?: string[];
+    reason?: string;
+  }) => void;
   /** 是否允许上下移动（自定义排序） */
   canReorder?: boolean;
   onMoveUp?: () => void;
@@ -231,6 +232,7 @@ export function ProviderCard({
   proxyRecentUsageStats,
   modelsProbeStatus = "idle",
   modelsProbeHistoryStatus,
+  modelsProbeReason,
   modelsProbeModelIds,
   onModelsProbeResult,
   canReorder = false,
@@ -316,13 +318,17 @@ export function ProviderCard({
     appId === "hermes" && isHermesReadOnlyProvider(provider.settingsConfig);
   const isCodexOauth =
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
+  const hasInlineQuickAdjust =
+    Boolean(onUpdate) &&
+    (appId === "codex" || appId === "claude" || appId === "claude-desktop");
   const codexNeedsRouting = useMemo(() => {
-    if (appId !== "codex" || provider.category === "official") return false;
+    if (appId !== "codex") return false;
     if (
       provider.meta?.apiFormat === "openai_chat" ||
       provider.meta?.apiFormat === "anthropic"
     )
       return true;
+    // 真·官方（无自定义 config 语义）通常不需要路由；有 TOML 时再看 wire_api
     const config = (provider.settingsConfig as Record<string, any>)?.config;
     return (
       typeof config === "string" &&
@@ -331,7 +337,6 @@ export function ProviderCard({
     );
   }, [
     appId,
-    provider.category,
     provider.meta?.apiFormat,
     (provider.settingsConfig as Record<string, any>)?.config,
   ]);
@@ -398,8 +403,7 @@ export function ProviderCard({
   const effectiveProbeStatus =
     modelsProbeStatus === "skipped" ? "idle" : modelsProbeStatus;
 
-  const canRename =
-    Boolean(onUpdate) && !isHermesReadOnly && !isAnyOmo;
+  const canRename = Boolean(onUpdate) && !isHermesReadOnly && !isAnyOmo;
 
   const startRename = () => {
     if (!canRename) return;
@@ -489,15 +493,19 @@ export function ProviderCard({
           effectiveProbeStatus === "empty" && "from-orange-500/15",
           effectiveProbeStatus === "failed" && "from-red-500/15",
           effectiveProbeStatus === "probing" && "from-amber-500/10",
-          effectiveProbeStatus === "idle" && shouldUseGreen && "from-emerald-500/10",
-          effectiveProbeStatus === "idle" && shouldUseBlue && "from-blue-500/10",
+          effectiveProbeStatus === "idle" &&
+            shouldUseGreen &&
+            "from-emerald-500/10",
+          effectiveProbeStatus === "idle" &&
+            shouldUseBlue &&
+            "from-blue-500/10",
           effectiveProbeStatus === "idle" &&
             !shouldUseGreen &&
             !shouldUseBlue &&
             "from-primary/10",
-          (effectiveProbeStatus !== "idle" ||
+          effectiveProbeStatus !== "idle" ||
             isActiveProvider ||
-            hasPersistentConfigHighlight)
+            hasPersistentConfigHighlight
             ? "opacity-100"
             : "opacity-0",
         )}
@@ -868,33 +876,34 @@ export function ProviderCard({
               </button>
             )}
 
-            {appId === "codex" &&
-              provider.category !== "official" &&
-              onUpdate && (
-                <CodexProviderQuickAdjust
-                  provider={provider}
-                  onUpdate={onUpdate}
-                  modelsProbeStatus={modelsProbeStatus}
-                  modelsProbeHistoryStatus={modelsProbeHistoryStatus}
-                  onProbeResult={onModelsProbeResult}
-                  modelBrandIcons={modelLogoPack.icons}
-                  modelOptions={modelsProbeModelIds}
-                  onSelectBrandModel={(modelId) => {
-                    const next = applyProviderModel(provider, appId, modelId);
-                    if (next) void Promise.resolve(onUpdate(next));
-                  }}
-                  belowUpstream={
-                    <ProviderProxyUsageSummary
-                      stats={proxyUsageStats}
-                      recentStats={proxyRecentUsageStats}
-                    />
-                  }
-                />
-              )}
+            {/* Codex / Claude / Claude Desktop：上游格式 + 模型下拉 + 获取 + LOGO
+                不因 category=official 隐藏——第三方转发常被标成官方分类，有凭证即可用 */}
+            {hasInlineQuickAdjust && onUpdate && (
+              <CodexProviderQuickAdjust
+                appId={appId}
+                provider={provider}
+                onUpdate={onUpdate}
+                modelsProbeStatus={modelsProbeStatus}
+                modelsProbeHistoryStatus={modelsProbeHistoryStatus}
+                modelsProbeReason={modelsProbeReason}
+                onProbeResult={onModelsProbeResult}
+                modelBrandIcons={modelLogoPack.icons}
+                modelOptions={modelsProbeModelIds}
+                onSelectBrandModel={(modelId) => {
+                  const next = applyProviderModel(provider, appId, modelId);
+                  if (next) void Promise.resolve(onUpdate(next));
+                }}
+                belowUpstream={
+                  <ProviderProxyUsageSummary
+                    stats={proxyUsageStats}
+                    recentStats={proxyRecentUsageStats}
+                  />
+                }
+              />
+            )}
 
-            {/* 非 Codex 行：模型 LOGO 仍显示，每行 6 个自动换行 */}
-            {!(appId === "codex" && provider.category !== "official" && onUpdate) &&
-              modelLogoPack.icons.length > 0 && (
+            {/* 其它应用：模型 LOGO 网格；已挂快速调整的应用不再重复 */}
+            {!hasInlineQuickAdjust && modelLogoPack.icons.length > 0 && (
               <div
                 className="grid w-full min-w-0 grid-cols-6 gap-1.5 pt-0.5"
                 style={{ maxWidth: "calc(6 * 2.25rem + 5 * 0.375rem)" }}
@@ -960,12 +969,8 @@ export function ProviderCard({
               </div>
             )}
 
-            {/* 非 Codex 或无 quick-adjust 时：成功率摘要仍在左侧信息列底部 */}
-            {!(
-              appId === "codex" &&
-              provider.category !== "official" &&
-              onUpdate
-            ) && (
+            {/* 已挂 quick-adjust 的应用：成功率摘要改在上游格式下方，避免重复 */}
+            {!hasInlineQuickAdjust && (
               <ProviderProxyUsageSummary
                 stats={proxyUsageStats}
                 recentStats={proxyRecentUsageStats}
@@ -975,7 +980,7 @@ export function ProviderCard({
         </div>
 
         {/* 右侧：Usage 单行（无小气泡）+ 最近调用卡片；启用操作行垂直居中 */}
-        <div className="relative ml-auto flex w-[200px] sm:w-[280px] shrink-0 flex-col self-stretch">
+        <div className="relative ml-auto flex w-full min-w-0 shrink-0 flex-col self-stretch sm:w-[360px] xl:w-[400px]">
           {/* 用量查询：与最近调用同宽，单行，不套外层气泡 */}
           {(isCopilot ||
             isCodexOauth ||
@@ -1060,8 +1065,8 @@ export function ProviderCard({
         </div>
 
         {/* 启用/操作按钮：整行垂直居中（不再贴底） */}
-        <div className="pointer-events-none absolute inset-y-0 right-2 z-20 flex items-center justify-end opacity-0 transition-opacity duration-200 group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 sm:right-3">
-          <div className="flex items-center gap-1.5 rounded-md bg-card/90 px-1 py-0.5 shadow-sm ring-1 ring-border/50 backdrop-blur-sm">
+        <div className="pointer-events-none absolute inset-y-0 right-2 z-20 flex w-[calc(100%-1rem)] items-center justify-end opacity-0 transition-opacity duration-200 group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 sm:right-3 sm:w-[360px] xl:w-[400px]">
+          <div className="flex max-w-full items-center justify-end rounded-md bg-card/90 px-1 py-0.5 shadow-sm ring-1 ring-border/50 backdrop-blur-sm">
             <ProviderActions
               appId={appId}
               isCurrent={isCurrent}
