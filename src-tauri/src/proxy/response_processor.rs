@@ -9,7 +9,7 @@ use super::{
     handler_context::{RequestContext, StreamingTimeoutConfig},
     hyper_client::ProxyResponse,
     providers::transform_codex_chat::{
-        ensure_responses_payload_usage, ensure_responses_usage_shape,
+        ensure_responses_payload_usage,
     },
     server::ProxyState,
     sse::{append_utf8_safe, strip_sse_field, take_sse_block},
@@ -191,7 +191,7 @@ pub async fn handle_streaming(
     // Grok Build (and some Codex builds) require nested usage details on every
     // Responses payload. Normalize only those app types so other clients stay
     // zero-copy on the hot path.
-    let stream: futures::stream::BoxStream<'static, Result<Bytes, reqwest::Error>> =
+    let stream: futures::stream::BoxStream<'static, Result<Bytes, std::io::Error>> =
         if needs_responses_usage_shape(ctx.app_type_str) {
             Box::pin(create_responses_usage_normalized_stream(stream))
         } else {
@@ -405,9 +405,7 @@ fn rewrite_responses_sse_block_usage(block: &str) -> Option<String> {
         out.push_str(&line);
         out.push('\n');
     }
-    if event_name.is_some() && !other_lines.iter().any(|l| l.starts_with("event:") || l.starts_with("event: ")) {
-        // event already preserved via other_lines when present.
-    }
+    let _ = event_name;
     out.push_str("data: ");
     out.push_str(&rewritten_data);
     out.push_str("\n\n");
@@ -464,11 +462,6 @@ where
     }
 }
 
-// silence unused-import warning when helper paths change during refactors
-#[allow(dead_code)]
-fn _ensure_usage_shape_link(usage: &mut Value) {
-    ensure_responses_usage_shape(usage);
-}
 
 // ============================================================================
 // SSE 使用量收集器
