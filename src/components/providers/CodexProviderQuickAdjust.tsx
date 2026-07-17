@@ -1,12 +1,20 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import type { CodexApiFormat, Provider } from "@/types";
+import type { ClaudeApiFormat, CodexApiFormat, Provider } from "@/types";
+import type { AppId } from "@/lib/api";
 import type { ModelsProbeStatus } from "@/hooks/useFetchCurrentProviderModels";
 import type { ModelBrandIcon } from "@/utils/modelBrandIcon";
 import { pickBrandDiverseModelIds } from "@/utils/modelBrandIcon";
 import {
+  classifyFetchModelsError,
   fetchModelsForConfig,
   showFetchModelsError,
   type FetchedModel,
@@ -17,8 +25,9 @@ import {
   extractCodexExperimentalBearerToken,
   extractCodexModelName,
   extractCodexWireApi,
-  setCodexModelName,
 } from "@/utils/providerConfigUtils";
+import { applyProviderModel } from "@/utils/applyProviderModel";
+import { resolveProviderModelsProbeTarget } from "@/utils/providerModelsProbe";
 import { deepClone } from "@/utils/deepClone";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,21 +40,25 @@ import {
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { cn } from "@/lib/utils";
 
+type QuickApiFormat = ClaudeApiFormat | CodexApiFormat;
+
 interface CodexProviderQuickAdjustProps {
+  appId: AppId;
   provider: Provider;
   onUpdate: (provider: Provider) => void | Promise<void>;
   /** 瞬时探测结果（约 60s），驱动本卡「获取」按钮着色 */
   modelsProbeStatus?: ModelsProbeStatus;
   /** 最近一次完成的探测历史（localStorage），用于按钮色持久化 */
   modelsProbeHistoryStatus?: ModelsProbeStatus;
+  /** 失败/跳过的稳定原因分类（与 history.reason 同源，可持久） */
+  modelsProbeReason?: string;
   /** 本卡手动获取完成后写入持久 history */
-  onProbeResult?: (
-    entry: {
-      status: ModelsProbeStatus;
-      modelCount?: number;
-      modelIds?: string[];
-    },
-  ) => void;
+  onProbeResult?: (entry: {
+    status: ModelsProbeStatus;
+    modelCount?: number;
+    modelIds?: string[];
+    reason?: string;
+  }) => void;
   /** 探测到的模型 brand LOGO，显示在当前模型选择框下方 */
   modelBrandIcons?: ModelBrandIcon[];
   /** 探测历史中的模型 id（用于下拉选项，无需本会话重新获取） */
@@ -58,6 +71,10 @@ interface CodexProviderQuickAdjustProps {
   belowUpstream?: ReactNode;
 }
 
+function isClaudeFamily(appId: AppId): boolean {
+  return appId === "claude" || appId === "claude-desktop";
+}
+
 function pickCodexApiKey(provider: Provider): string {
   const config = provider.settingsConfig as Record<string, any> | undefined;
   const authKey = config?.auth?.OPENAI_API_KEY;
@@ -66,27 +83,83 @@ function pickCodexApiKey(provider: Provider): string {
   return extractCodexExperimentalBearerToken(configText) || "";
 }
 
-function resolveApiFormat(provider: Provider): CodexApiFormat {
+function extractClaudeModelName(provider: Provider): string {
+  const env = (provider.settingsConfig as Record<string, any> | undefined)?.env;
+  if (!env || typeof env !== "object") return "";
+  const model = env.ANTHROPIC_MODEL;
+  return typeof model === "string" ? model.trim() : "";
+}
+
+function resolveApiFormat(provider: Provider, appId: AppId): QuickApiFormat {
   const metaFormat = provider.meta?.apiFormat;
   if (
     metaFormat === "openai_chat" ||
     metaFormat === "openai_responses" ||
-    metaFormat === "anthropic"
+    metaFormat === "anthropic" ||
+    metaFormat === "gemini_native"
   ) {
+    if (appId === "codex" && metaFormat === "gemini_native") {
+      return "openai_responses";
+    }
     return metaFormat;
   }
-  const configText =
-    typeof (provider.settingsConfig as Record<string, any>)?.config === "string"
-      ? ((provider.settingsConfig as Record<string, any>).config as string)
+  if (appId === "codex") {
+    const configText =
+      typeof (provider.settingsConfig as Record<string, any>)?.config ===
+      "string"
+        ? ((provider.settingsConfig as Record<string, any>).config as string)
+        : "";
+    return (
+      codexApiFormatFromWireApi(extractCodexWireApi(configText)) ??
+      "openai_responses"
+    );
+  }
+  return "anthropic";
+}
+
+function resolveProbeCredentials(
+  provider: Provider,
+  appId: AppId,
+): { baseUrl: string; apiKey: string } {
+  const resolved = resolveProviderModelsProbeTarget(provider, appId);
+  if (resolved.ok) {
+    return {
+      baseUrl: resolved.target.baseUrl,
+      apiKey: resolved.target.apiKey,
+    };
+  }
+  if (appId === "codex") {
+    const configText =
+      typeof (provider.settingsConfig as Record<string, any>)?.config ===
+      "string"
+        ? ((provider.settingsConfig as Record<string, any>).config as string)
+        : "";
+    return {
+      baseUrl: extractCodexBaseUrl(configText) || "",
+      apiKey: pickCodexApiKey(provider),
+    };
+  }
+  const env = (provider.settingsConfig as Record<string, any> | undefined)?.env;
+  const baseUrl =
+    typeof env?.ANTHROPIC_BASE_URL === "string"
+      ? env.ANTHROPIC_BASE_URL.trim()
       : "";
-  return codexApiFormatFromWireApi(extractCodexWireApi(configText)) ?? "openai_responses";
+  const apiKey =
+    (typeof env?.ANTHROPIC_AUTH_TOKEN === "string" &&
+      env.ANTHROPIC_AUTH_TOKEN.trim()) ||
+    (typeof env?.ANTHROPIC_API_KEY === "string" &&
+      env.ANTHROPIC_API_KEY.trim()) ||
+    "";
+  return { baseUrl, apiKey };
 }
 
 export function CodexProviderQuickAdjust({
+  appId,
   provider,
   onUpdate,
   modelsProbeStatus = "idle",
   modelsProbeHistoryStatus,
+  modelsProbeReason,
   onProbeResult,
   modelBrandIcons = [],
   modelOptions = [],
@@ -100,13 +173,16 @@ export function CodexProviderQuickAdjust({
   const [fetchStatus, setFetchStatus] = useState<
     "idle" | "fetching" | "success" | "empty" | "failed"
   >("idle");
+  const [fetchFailureReason, setFetchFailureReason] = useState<
+    string | undefined
+  >();
 
   useEffect(() => {
     setFetchedModels([]);
     setFetchStatus("idle");
+    setFetchFailureReason(undefined);
     setIsFetchingModels(false);
-  }, [provider.id]);
-
+  }, [provider.id, appId]);
 
   // 同步探测结果到本卡「获取」按钮色：
   // 1) 本地手动获取进行中优先
@@ -118,14 +194,17 @@ export function CodexProviderQuickAdjust({
     const applyCompleted = (status: ModelsProbeStatus | undefined) => {
       if (status === "success") {
         setFetchStatus("success");
+        setFetchFailureReason(undefined);
         return true;
       }
       if (status === "empty") {
         setFetchStatus("empty");
+        setFetchFailureReason(undefined);
         return true;
       }
       if (status === "failed") {
         setFetchStatus("failed");
+        setFetchFailureReason(modelsProbeReason || "unknown");
         return true;
       }
       return false;
@@ -142,7 +221,12 @@ export function CodexProviderQuickAdjust({
     if (applyCompleted(modelsProbeHistoryStatus)) {
       return;
     }
-  }, [isFetchingModels, modelsProbeHistoryStatus, modelsProbeStatus]);
+  }, [
+    isFetchingModels,
+    modelsProbeHistoryStatus,
+    modelsProbeReason,
+    modelsProbeStatus,
+  ]);
 
   const fetchButtonClassName = useMemo(() => {
     const base =
@@ -182,18 +266,32 @@ export function CodexProviderQuickAdjust({
     }
   }, [fetchStatus, t]);
 
+  const fetchFailureReasonLabel = useMemo(() => {
+    if (fetchStatus !== "failed") return "";
+    const reason = fetchFailureReason || modelsProbeReason || "unknown";
+    return t(`provider.failureReason.${reason}`, {
+      defaultValue: reason,
+    });
+  }, [fetchFailureReason, fetchStatus, modelsProbeReason, t]);
+
   const configText = useMemo(() => {
     const config = provider.settingsConfig as Record<string, any> | undefined;
     return typeof config?.config === "string" ? config.config : "";
   }, [provider.settingsConfig]);
 
-  const currentFormat = useMemo(() => resolveApiFormat(provider), [provider]);
-  const currentModel = useMemo(
-    () => extractCodexModelName(configText) || "",
-    [configText],
+  const currentFormat = useMemo(
+    () => resolveApiFormat(provider, appId),
+    [appId, provider],
   );
-  const baseUrl = useMemo(() => extractCodexBaseUrl(configText) || "", [configText]);
-  const apiKey = useMemo(() => pickCodexApiKey(provider), [provider]);
+  const currentModel = useMemo(() => {
+    if (appId === "codex") return extractCodexModelName(configText) || "";
+    if (isClaudeFamily(appId)) return extractClaudeModelName(provider);
+    return "";
+  }, [appId, configText, provider]);
+  const { baseUrl, apiKey } = useMemo(
+    () => resolveProbeCredentials(provider, appId),
+    [appId, provider],
+  );
 
   const persistProvider = useCallback(
     async (next: Provider) => {
@@ -209,14 +307,14 @@ export function CodexProviderQuickAdjust({
 
   const handleFormatChange = useCallback(
     async (value: string) => {
-      const format = value as CodexApiFormat;
+      const format = value as QuickApiFormat;
       if (format === currentFormat) return;
       const next = deepClone(provider) as Provider;
       next.meta = {
         ...(next.meta ?? {}),
         apiFormat: format,
       };
-      // Codex 侧 wire_api 固定 responses；上游格式由 meta.apiFormat 控制代理转换
+      // Codex/Claude：上游格式都写 meta.apiFormat；Codex 客户端 wire_api 仍固定 responses
       await persistProvider(next);
     },
     [currentFormat, persistProvider, provider],
@@ -226,21 +324,26 @@ export function CodexProviderQuickAdjust({
     async (modelId: string) => {
       const trimmed = modelId.trim();
       if (!trimmed || trimmed === currentModel) return;
-      const next = deepClone(provider) as Provider;
-      const settings = (next.settingsConfig ?? {}) as Record<string, any>;
-      const prevConfig =
-        typeof settings.config === "string" ? settings.config : "";
-      settings.config = setCodexModelName(prevConfig, trimmed);
-      next.settingsConfig = settings;
+      const next = applyProviderModel(provider, appId, trimmed);
+      if (!next) {
+        toast.error(
+          t("provider.switchModelFailed", {
+            defaultValue: "无法写入该应用的模型字段",
+          }),
+        );
+        return;
+      }
       await persistProvider(next);
     },
-    [currentModel, persistProvider, provider],
+    [appId, currentModel, persistProvider, provider, t],
   );
 
   const handleFetchModels = useCallback(async () => {
     if (!baseUrl || !apiKey) {
       setFetchStatus("failed");
-      onProbeResult?.({ status: "failed" });
+      const reason = !apiKey ? "api_key" : "config";
+      setFetchFailureReason(reason);
+      onProbeResult?.({ status: "failed", reason });
       showFetchModelsError(null, t, {
         hasApiKey: !!apiKey,
         hasBaseUrl: !!baseUrl,
@@ -249,6 +352,7 @@ export function CodexProviderQuickAdjust({
     }
     setIsFetchingModels(true);
     setFetchStatus("fetching");
+    setFetchFailureReason(undefined);
     try {
       const models = await fetchModelsForConfig(
         baseUrl,
@@ -268,6 +372,7 @@ export function CodexProviderQuickAdjust({
       );
       if (models.length === 0) {
         setFetchStatus("empty");
+        setFetchFailureReason(undefined);
         onProbeResult?.({
           status: "empty",
           modelCount: 0,
@@ -276,6 +381,7 @@ export function CodexProviderQuickAdjust({
         toast.info(t("providerForm.fetchModelsEmpty"));
       } else {
         setFetchStatus("success");
+        setFetchFailureReason(undefined);
         onProbeResult?.({
           status: "success",
           modelCount: models.length,
@@ -286,23 +392,28 @@ export function CodexProviderQuickAdjust({
         );
       }
     } catch (err) {
-      console.warn("[CodexQuickAdjust] fetch models failed", err);
+      console.warn("[ProviderQuickAdjust] fetch models failed", { appId, err });
       setFetchedModels([]);
       setFetchStatus("failed");
-      onProbeResult?.({ status: "failed" });
+      const reason = classifyFetchModelsError(err);
+      setFetchFailureReason(reason);
+      onProbeResult?.({
+        status: "failed",
+        reason,
+      });
       showFetchModelsError(err, t);
     } finally {
       setIsFetchingModels(false);
     }
   }, [
     apiKey,
+    appId,
     baseUrl,
     onProbeResult,
     provider.meta?.customUserAgent,
     provider.meta?.isFullUrl,
     t,
   ]);
-
 
   const selectableModelIds = useMemo(() => {
     const ids: string[] = [];
@@ -337,7 +448,9 @@ export function CodexProviderQuickAdjust({
         <div className="flex min-w-0 flex-col gap-1">
           <div className="flex min-w-0 items-center gap-1.5">
             <span className="shrink-0 text-[11px] text-muted-foreground">
-              {t("codexConfig.upstreamFormatLabel", { defaultValue: "上游格式" })}
+              {t("codexConfig.upstreamFormatLabel", {
+                defaultValue: "上游格式",
+              })}
             </span>
             <Select
               value={currentFormat}
@@ -348,26 +461,55 @@ export function CodexProviderQuickAdjust({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="z-[200] min-w-[var(--radix-select-trigger-width)]">
-                <SelectItem value="openai_chat">
-                  {t("codexConfig.upstreamFormatChat", {
-                    defaultValue: "Chat Completions（需开启路由）",
-                  })}
-                </SelectItem>
-                <SelectItem value="openai_responses">
-                  {t("codexConfig.upstreamFormatResponses", {
-                    defaultValue: "Responses（原生）",
-                  })}
-                </SelectItem>
-                <SelectItem value="anthropic">
-                  {t("codexConfig.upstreamFormatAnthropic", {
-                    defaultValue: "Anthropic Messages（需开启路由）",
-                  })}
-                </SelectItem>
+                {isClaudeFamily(appId) ? (
+                  <>
+                    <SelectItem value="anthropic">
+                      {t("providerForm.apiFormatAnthropic", {
+                        defaultValue: "Anthropic Messages（原生）",
+                      })}
+                    </SelectItem>
+                    <SelectItem value="openai_chat">
+                      {t("providerForm.apiFormatOpenAIChat", {
+                        defaultValue: "OpenAI Chat Completions（需开启路由）",
+                      })}
+                    </SelectItem>
+                    <SelectItem value="openai_responses">
+                      {t("providerForm.apiFormatOpenAIResponses", {
+                        defaultValue: "OpenAI Responses（需开启路由）",
+                      })}
+                    </SelectItem>
+                    <SelectItem value="gemini_native">
+                      {t("providerForm.apiFormatGeminiNative", {
+                        defaultValue: "Gemini Native（需开启路由）",
+                      })}
+                    </SelectItem>
+                  </>
+                ) : (
+                  <>
+                    <SelectItem value="openai_chat">
+                      {t("codexConfig.upstreamFormatChat", {
+                        defaultValue: "Chat Completions（需开启路由）",
+                      })}
+                    </SelectItem>
+                    <SelectItem value="openai_responses">
+                      {t("codexConfig.upstreamFormatResponses", {
+                        defaultValue: "Responses（原生）",
+                      })}
+                    </SelectItem>
+                    <SelectItem value="anthropic">
+                      {t("codexConfig.upstreamFormatAnthropic", {
+                        defaultValue: "Anthropic Messages（需开启路由）",
+                      })}
+                    </SelectItem>
+                  </>
+                )}
               </SelectContent>
             </Select>
           </div>
           {belowUpstream ? (
-            <div className="min-w-0 max-w-[min(100%,28rem)]">{belowUpstream}</div>
+            <div className="min-w-0 max-w-[min(100%,28rem)]">
+              {belowUpstream}
+            </div>
           ) : null}
         </div>
 
@@ -426,7 +568,8 @@ export function CodexProviderQuickAdjust({
                           defaultValue: "未返回模型",
                         })
                       : fetchStatus === "failed"
-                        ? t("providerForm.fetchModelsFailed", {
+                        ? fetchFailureReasonLabel ||
+                          t("providerForm.fetchModelsFailed", {
                             defaultValue: "获取失败",
                           })
                         : t("providerForm.fetchModels")
@@ -441,6 +584,15 @@ export function CodexProviderQuickAdjust({
                   ? t("codexConfig.quickFetchModels", { defaultValue: "获取" })
                   : fetchStatusLabel}
               </Button>
+              {fetchStatus === "failed" && fetchFailureReasonLabel ? (
+                <span
+                  className="max-w-[7.5rem] shrink-0 truncate text-[11px] leading-none text-red-600 dark:text-red-400"
+                  title={fetchFailureReasonLabel}
+                  aria-label={fetchFailureReasonLabel}
+                >
+                  {fetchFailureReasonLabel}
+                </span>
+              ) : null}
             </div>
 
             {modelBrandIcons.length > 0 && (
@@ -509,5 +661,3 @@ export function CodexProviderQuickAdjust({
     </div>
   );
 }
-
-

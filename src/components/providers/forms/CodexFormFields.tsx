@@ -469,7 +469,8 @@ export function CodexFormFields({
 
       {/* 默认模型 —— config.toml 顶层 model，Codex 启动时默认请求的模型。
           实时写回 TOML；留空则删行（有映射时保存回退为映射第一行）。 */}
-      {category !== "official" && onModelChange && (
+      {/* 自用：official 分类也常是第三方转发，需可编辑默认模型与拉模型 */}
+      {onModelChange && (
         <div className="space-y-1.5">
           <FormLabel htmlFor="codexDefaultModel">
             {t("codexConfig.defaultModelLabel", { defaultValue: "默认模型" })}
@@ -534,9 +535,9 @@ export function CodexFormFields({
         </div>
       )}
 
-      {/* 高级选项 —— 上游格式/模型映射/思考能力/自定义 UA；预设供应商通常无需展开 */}
-      {category !== "official" && (
-        <Collapsible
+      {/* 高级选项 —— 上游格式/模型映射/思考能力/自定义 UA
+          自用：official 分类转发也需要改上游格式 / 拉模型映射，不再因 category 隐藏 */}
+      <Collapsible
           open={advancedExpanded}
           onOpenChange={setAdvancedExpanded}
           className="rounded-lg border border-border-default p-4"
@@ -1001,8 +1002,7 @@ export function CodexFormFields({
               </div>
             </div>
           </CollapsibleContent>
-        </Collapsible>
-      )}
+      </Collapsible>
 
       {/* 端点测速弹窗 - Codex */}
       {shouldShowSpeedTest && isEndpointModalOpen && (
