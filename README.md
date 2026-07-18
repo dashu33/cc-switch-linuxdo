@@ -584,5 +584,5 @@ For new features, please open an issue for discussion before submitting a PR. PR
 MIT © Jason Young
 
 
-Thanks to the <a href="[https://www.packyapi.com/register?aff=cc-switch](https://linux.do/)">Linux.do</a>  community for its support and inspiration.
+Thanks to the <a href="[https://linux.do/](https://linux.do/)](https://linux.do/)">Linux.do</a>  community for its support and inspiration.
 
