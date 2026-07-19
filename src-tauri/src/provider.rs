@@ -583,14 +583,85 @@ impl ProviderManager {
 // ============================================================================
 
 /// 统一供应商的应用启用状态
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+///
+/// 反序列化时：升级前 JSON 缺少的**扩展应用**字段（Grok Build / Claude Desktop /
+/// OpenCode / OpenClaw / Hermes）按「启用」处理，而不是 `false`。
+/// 显式写入的 `false` 会保留。原始三端（claude/codex/gemini）缺字段仍默认 `false`。
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct UniversalProviderApps {
-    #[serde(default)]
     pub claude: bool,
-    #[serde(default)]
     pub codex: bool,
-    #[serde(default)]
     pub gemini: bool,
+    pub grokbuild: bool,
+    #[serde(rename = "claudeDesktop")]
+    pub claude_desktop: bool,
+    pub opencode: bool,
+    pub openclaw: bool,
+    pub hermes: bool,
+}
+
+impl<'de> Deserialize<'de> for UniversalProviderApps {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+
+        let value = Value::deserialize(deserializer)?;
+        let obj = value
+            .as_object()
+            .ok_or_else(|| D::Error::custom("apps must be an object"))?;
+
+        fn read_bool(
+            obj: &serde_json::Map<String, Value>,
+            key: &str,
+            default_if_missing: bool,
+        ) -> bool {
+            match obj.get(key) {
+                Some(v) => v.as_bool().unwrap_or(default_if_missing),
+                None => default_if_missing,
+            }
+        }
+
+        fn read_bool_aliased(
+            obj: &serde_json::Map<String, Value>,
+            keys: &[&str],
+            default_if_missing: bool,
+        ) -> bool {
+            for key in keys {
+                if let Some(v) = obj.get(*key) {
+                    return v.as_bool().unwrap_or(default_if_missing);
+                }
+            }
+            default_if_missing
+        }
+
+        // Extended apps introduced after the original Claude/Codex/Gemini trio:
+        // missing key ⇒ enable on upgrade; explicit false is kept.
+        Ok(Self {
+            claude: read_bool(obj, "claude", false),
+            codex: read_bool(obj, "codex", false),
+            gemini: read_bool(obj, "gemini", false),
+            grokbuild: read_bool(obj, "grokbuild", true),
+            claude_desktop: read_bool_aliased(obj, &["claudeDesktop", "claude_desktop"], true),
+            opencode: read_bool(obj, "opencode", true),
+            openclaw: read_bool(obj, "openclaw", true),
+            hermes: read_bool(obj, "hermes", true),
+        })
+    }
+}
+
+/// 判断 apps 对象是否缺少扩展应用字段（用于落盘回写迁移）
+pub fn universal_apps_json_needs_extended_fields(apps: &Value) -> bool {
+    let Some(obj) = apps.as_object() else {
+        return false;
+    };
+    let has_desktop = obj.contains_key("claudeDesktop") || obj.contains_key("claude_desktop");
+    !obj.contains_key("grokbuild")
+        || !has_desktop
+        || !obj.contains_key("opencode")
+        || !obj.contains_key("openclaw")
+        || !obj.contains_key("hermes")
 }
 
 /// Claude 模型配置
@@ -633,6 +704,14 @@ pub struct GeminiModelConfig {
     pub model: Option<String>,
 }
 
+/// Grok Build 模型配置
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GrokBuildModelConfig {
+    /// Grok Build profile/model name
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
 /// 各应用的模型配置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UniversalProviderModels {
@@ -642,6 +721,8 @@ pub struct UniversalProviderModels {
     pub codex: Option<CodexModelConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gemini: Option<GeminiModelConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grokbuild: Option<GrokBuildModelConfig>,
 }
 
 /// 统一供应商（跨应用共享配置）
@@ -693,6 +774,40 @@ pub struct UniversalProvider {
 }
 
 impl UniversalProvider {
+    fn strip_trailing_path_suffix(base_url: &str, suffixes: &[&str]) -> String {
+        let trimmed = base_url.trim().trim_end_matches('/');
+        for suffix in suffixes {
+            if trimmed.len() > suffix.len() && trimmed.ends_with(suffix) {
+                return trimmed[..trimmed.len() - suffix.len()].to_string();
+            }
+        }
+        trimmed.to_string()
+    }
+
+    fn openai_compatible_base_url(&self) -> String {
+        let base_trimmed = self.base_url.trim_end_matches('/');
+        let origin_only = match base_trimmed.split_once("://") {
+            Some((_scheme, rest)) => !rest.contains('/'),
+            None => !base_trimmed.contains('/'),
+        };
+        if base_trimmed.ends_with("/v1") || !origin_only {
+            base_trimmed.to_string()
+        } else {
+            format!("{base_trimmed}/v1")
+        }
+    }
+
+    /// Claude Code appends `/v1/messages` to ANTHROPIC_BASE_URL.
+    fn anthropic_base_url(&self) -> String {
+        Self::strip_trailing_path_suffix(&self.base_url, &["/v1"])
+    }
+
+    /// Gemini CLI's official SDK appends `/v1beta` and the model method path
+    /// to GOOGLE_GEMINI_BASE_URL.
+    fn gemini_base_url(&self) -> String {
+        Self::strip_trailing_path_suffix(&self.base_url, &["/v1beta", "/v1"])
+    }
+
     /// 创建新的统一供应商
     pub fn new(
         id: String,
@@ -738,10 +853,11 @@ impl UniversalProvider {
         let opus = models
             .and_then(|m| m.opus_model.clone())
             .unwrap_or_else(|| model.clone());
+        let base_url = self.anthropic_base_url();
 
         let settings_config = serde_json::json!({
             "env": {
-                "ANTHROPIC_BASE_URL": self.base_url,
+                "ANTHROPIC_BASE_URL": base_url,
                 "ANTHROPIC_AUTH_TOKEN": self.api_key,
                 "ANTHROPIC_MODEL": model,
                 "ANTHROPIC_DEFAULT_HAIKU_MODEL": haiku,
@@ -781,18 +897,7 @@ impl UniversalProvider {
             .unwrap_or_else(|| "high".to_string());
 
         // Codex/OpenAI 的 base_url 既可能是纯 origin（需要补 /v1），也可能包含自定义前缀（不应强行补版本）
-        let base_trimmed = self.base_url.trim_end_matches('/');
-        let origin_only = match base_trimmed.split_once("://") {
-            Some((_scheme, rest)) => !rest.contains('/'),
-            None => !base_trimmed.contains('/'),
-        };
-        let codex_base_url = if base_trimmed.ends_with("/v1") {
-            base_trimmed.to_string()
-        } else if origin_only {
-            format!("{base_trimmed}/v1")
-        } else {
-            base_trimmed.to_string()
-        };
+        let codex_base_url = self.openai_compatible_base_url();
 
         // 生成 Codex 的 config.toml 内容
         let config_toml = format!(
@@ -848,10 +953,11 @@ requires_openai_auth = true"#
         let model = models
             .and_then(|m| m.model.clone())
             .unwrap_or_else(|| "gemini-2.5-pro".to_string());
+        let base_url = self.gemini_base_url();
 
         let settings_config = serde_json::json!({
             "env": {
-                "GOOGLE_GEMINI_BASE_URL": self.base_url,
+                "GOOGLE_GEMINI_BASE_URL": base_url,
                 "GEMINI_API_KEY": self.api_key,
                 "GEMINI_MODEL": model,
             }
@@ -861,6 +967,228 @@ requires_openai_auth = true"#
             id: format!("universal-gemini-{}", self.id),
             name: self.name.clone(),
             settings_config,
+            website_url: self.website_url.clone(),
+            category: Some("aggregator".to_string()),
+            created_at: self.created_at,
+            sort_index: self.sort_index,
+            notes: self.notes.clone(),
+            meta: self.meta.clone(),
+            icon: self.icon.clone(),
+            icon_color: self.icon_color.clone(),
+            in_failover_queue: false,
+        })
+    }
+
+    /// 生成 Grok Build 供应商配置
+    pub fn to_grokbuild_provider(&self) -> Option<Provider> {
+        if !self.apps.grokbuild {
+            return None;
+        }
+
+        let model = self
+            .models
+            .grokbuild
+            .as_ref()
+            .and_then(|m| m.model.clone())
+            .unwrap_or_else(|| "grok-4.5".to_string());
+        let profile = model.clone();
+
+        let mut document = toml_edit::DocumentMut::new();
+        document["models"]["default"] = toml_edit::value(profile.as_str());
+        let mut model_table = toml_edit::Table::new();
+        model_table["model"] = toml_edit::value(model.as_str());
+        let base_url = self.openai_compatible_base_url();
+        model_table["base_url"] = toml_edit::value(base_url.as_str());
+        model_table["name"] = toml_edit::value(self.name.as_str());
+        model_table["api_key"] = toml_edit::value(self.api_key.as_str());
+        model_table["api_backend"] = toml_edit::value("responses");
+        model_table["context_window"] = toml_edit::value(500_000i64);
+        document["model"][profile.as_str()] = toml_edit::Item::Table(model_table);
+
+        Some(Provider {
+            id: format!("universal-grokbuild-{}", self.id),
+            name: self.name.clone(),
+            settings_config: serde_json::json!({ "config": document.to_string() }),
+            website_url: self.website_url.clone(),
+            category: Some("aggregator".to_string()),
+            created_at: self.created_at,
+            sort_index: self.sort_index,
+            notes: self.notes.clone(),
+            meta: self.meta.clone(),
+            icon: self.icon.clone(),
+            icon_color: self.icon_color.clone(),
+            in_failover_queue: false,
+        })
+    }
+
+    /// 生成 Claude Desktop 本地 proxy 供应商配置
+    pub fn to_claude_desktop_provider(&self) -> Option<Provider> {
+        if !self.apps.claude_desktop {
+            return None;
+        }
+
+        let models = self.models.claude.as_ref();
+        let main_model = models
+            .and_then(|m| m.model.clone())
+            .unwrap_or_else(|| "claude-sonnet-5".to_string());
+        // 三档路由分别使用 sonnet/opus/haiku 配置；缺省回退到主模型
+        let sonnet = models
+            .and_then(|m| m.sonnet_model.clone())
+            .unwrap_or_else(|| main_model.clone());
+        let opus = models
+            .and_then(|m| m.opus_model.clone())
+            .unwrap_or_else(|| main_model.clone());
+        let haiku = models
+            .and_then(|m| m.haiku_model.clone())
+            .unwrap_or_else(|| main_model.clone());
+
+        let mut meta = self.meta.clone().unwrap_or_default();
+        meta.claude_desktop_mode = Some(ClaudeDesktopMode::Proxy);
+        meta.claude_desktop_model_routes = HashMap::from([
+            (
+                "claude-sonnet-5".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: sonnet,
+                    label_override: None,
+                    supports_1m: Some(true),
+                },
+            ),
+            (
+                "claude-opus-4-8".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: opus,
+                    label_override: None,
+                    supports_1m: Some(true),
+                },
+            ),
+            (
+                "claude-haiku-4-5".to_string(),
+                ClaudeDesktopModelRoute {
+                    model: haiku,
+                    label_override: None,
+                    supports_1m: Some(true),
+                },
+            ),
+        ]);
+
+        Some(Provider {
+            id: format!("universal-claude-desktop-{}", self.id),
+            name: self.name.clone(),
+            settings_config: serde_json::json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": self.base_url,
+                    "ANTHROPIC_AUTH_TOKEN": self.api_key,
+                    "ANTHROPIC_MODEL": main_model,
+                }
+            }),
+            website_url: self.website_url.clone(),
+            category: Some("aggregator".to_string()),
+            created_at: self.created_at,
+            sort_index: self.sort_index,
+            notes: self.notes.clone(),
+            meta: Some(meta),
+            icon: self.icon.clone(),
+            icon_color: self.icon_color.clone(),
+            in_failover_queue: false,
+        })
+    }
+
+    /// 生成 OpenCode 供应商配置
+    pub fn to_opencode_provider(&self) -> Option<Provider> {
+        if !self.apps.opencode {
+            return None;
+        }
+
+        let model = self
+            .models
+            .codex
+            .as_ref()
+            .and_then(|m| m.model.clone())
+            .unwrap_or_else(|| "gpt-5.5".to_string());
+        let base_url = self.openai_compatible_base_url();
+        Some(Provider {
+            id: format!("universal-opencode-{}", self.id),
+            name: self.name.clone(),
+            settings_config: serde_json::json!({
+                "npm": "@ai-sdk/openai-compatible",
+                "name": self.name,
+                "options": {
+                    "baseURL": base_url,
+                    "apiKey": self.api_key,
+                },
+                "models": {
+                    (model.clone()): { "name": model }
+                }
+            }),
+            website_url: self.website_url.clone(),
+            category: Some("aggregator".to_string()),
+            created_at: self.created_at,
+            sort_index: self.sort_index,
+            notes: self.notes.clone(),
+            meta: self.meta.clone(),
+            icon: self.icon.clone(),
+            icon_color: self.icon_color.clone(),
+            in_failover_queue: false,
+        })
+    }
+
+    /// 生成 OpenClaw 供应商配置
+    pub fn to_openclaw_provider(&self) -> Option<Provider> {
+        if !self.apps.openclaw {
+            return None;
+        }
+
+        let model = self
+            .models
+            .codex
+            .as_ref()
+            .and_then(|m| m.model.clone())
+            .unwrap_or_else(|| "gpt-5.5".to_string());
+        let base_url = self.openai_compatible_base_url();
+        Some(Provider {
+            id: format!("universal-openclaw-{}", self.id),
+            name: self.name.clone(),
+            settings_config: serde_json::json!({
+                "baseUrl": base_url,
+                "apiKey": self.api_key,
+                "api": "openai-completions",
+                "models": [{ "id": model, "name": model }]
+            }),
+            website_url: self.website_url.clone(),
+            category: Some("aggregator".to_string()),
+            created_at: self.created_at,
+            sort_index: self.sort_index,
+            notes: self.notes.clone(),
+            meta: self.meta.clone(),
+            icon: self.icon.clone(),
+            icon_color: self.icon_color.clone(),
+            in_failover_queue: false,
+        })
+    }
+
+    /// 生成 Hermes 供应商配置
+    pub fn to_hermes_provider(&self) -> Option<Provider> {
+        if !self.apps.hermes {
+            return None;
+        }
+
+        let model = self
+            .models
+            .codex
+            .as_ref()
+            .and_then(|m| m.model.clone())
+            .unwrap_or_else(|| "gpt-5.5".to_string());
+        let base_url = self.openai_compatible_base_url();
+        Some(Provider {
+            id: format!("universal-hermes-{}", self.id),
+            name: self.name.clone(),
+            settings_config: serde_json::json!({
+                "base_url": base_url,
+                "api_key": self.api_key,
+                "model": model,
+                "api_mode": "chat_completions",
+                "models": [{ "id": model, "name": model, "context_length": 200000 }]
+            }),
             website_url: self.website_url.clone(),
             category: Some("aggregator".to_string()),
             created_at: self.created_at,
@@ -974,8 +1302,9 @@ pub struct OpenCodeModelLimit {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, LocalProxyRequestOverrides,
-        OpenCodeProviderConfig, Provider, ProviderManager, ProviderMeta, UniversalProvider,
+        ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, GrokBuildModelConfig,
+        LocalProxyRequestOverrides, OpenCodeProviderConfig, Provider, ProviderManager,
+        ProviderMeta, UniversalProvider,
     };
     use serde_json::json;
     use std::collections::HashMap;
@@ -1306,6 +1635,42 @@ mod tests {
     }
 
     #[test]
+    fn universal_provider_to_claude_provider_strips_openai_v1_suffix() {
+        let mut universal = UniversalProvider::new(
+            "u1".to_string(),
+            "Universal".to_string(),
+            "newapi".to_string(),
+            "https://gateway.example/v1".to_string(),
+            "api-key".to_string(),
+        );
+        universal.apps.claude = true;
+
+        let provider = universal.to_claude_provider().expect("claude provider");
+        assert_eq!(
+            provider.settings_config["env"]["ANTHROPIC_BASE_URL"],
+            "https://gateway.example"
+        );
+    }
+
+    #[test]
+    fn universal_provider_to_gemini_provider_strips_version_suffix() {
+        let mut universal = UniversalProvider::new(
+            "u1".to_string(),
+            "Universal".to_string(),
+            "newapi".to_string(),
+            "https://gateway.example/v1".to_string(),
+            "api-key".to_string(),
+        );
+        universal.apps.gemini = true;
+
+        let provider = universal.to_gemini_provider().expect("gemini provider");
+        assert_eq!(
+            provider.settings_config["env"]["GOOGLE_GEMINI_BASE_URL"],
+            "https://gateway.example"
+        );
+    }
+
+    #[test]
     fn universal_provider_to_gemini_provider_uses_model() {
         let mut universal = UniversalProvider::new(
             "u1".to_string(),
@@ -1327,6 +1692,160 @@ mod tests {
                 .pointer("/env/GEMINI_MODEL")
                 .and_then(|item| item.as_str()),
             Some("gemini-custom")
+        );
+    }
+
+    #[test]
+    fn universal_provider_to_grokbuild_provider_builds_valid_config() {
+        let mut universal = UniversalProvider::new(
+            "newapi".to_string(),
+            "NewAPI".to_string(),
+            "newapi".to_string(),
+            "https://gateway.example/v1".to_string(),
+            "sk-test".to_string(),
+        );
+        universal.apps.grokbuild = true;
+        universal.models.grokbuild = Some(GrokBuildModelConfig {
+            model: Some("grok-4.5".to_string()),
+        });
+
+        let provider = universal
+            .to_grokbuild_provider()
+            .expect("grokbuild provider");
+        let config = provider.settings_config["config"]
+            .as_str()
+            .expect("grokbuild config text");
+        crate::grok_config::validate_config_toml(config).expect("valid Grok Build TOML");
+        assert_eq!(provider.id, "universal-grokbuild-newapi");
+    }
+
+    #[test]
+    fn universal_provider_builds_all_remaining_app_configs() {
+        let mut universal = UniversalProvider::new(
+            "newapi".to_string(),
+            "NewAPI".to_string(),
+            "newapi".to_string(),
+            "https://gateway.example/v1".to_string(),
+            "sk-test".to_string(),
+        );
+        universal.apps.claude_desktop = true;
+        universal.apps.opencode = true;
+        universal.apps.openclaw = true;
+        universal.apps.hermes = true;
+
+        let desktop = universal
+            .to_claude_desktop_provider()
+            .expect("Claude Desktop provider");
+        crate::claude_desktop_config::validate_provider(&desktop)
+            .expect("valid Claude Desktop proxy provider");
+        assert_eq!(desktop.id, "universal-claude-desktop-newapi");
+
+        let opencode = universal.to_opencode_provider().expect("OpenCode provider");
+        assert_eq!(opencode.settings_config["npm"], "@ai-sdk/openai-compatible");
+        assert_eq!(opencode.id, "universal-opencode-newapi");
+
+        let openclaw = universal.to_openclaw_provider().expect("OpenClaw provider");
+        assert_eq!(openclaw.settings_config["api"], "openai-completions");
+        assert_eq!(openclaw.id, "universal-openclaw-newapi");
+
+        let hermes = universal.to_hermes_provider().expect("Hermes provider");
+        assert_eq!(
+            hermes.settings_config["base_url"],
+            "https://gateway.example/v1"
+        );
+        assert_eq!(hermes.id, "universal-hermes-newapi");
+        assert_eq!(hermes.settings_config["api_mode"], "chat_completions");
+    }
+
+    #[test]
+    fn legacy_universal_apps_json_enables_missing_extended_apps() {
+        let apps: super::UniversalProviderApps = serde_json::from_value(json!({
+            "claude": true,
+            "codex": true,
+            "gemini": false
+        }))
+        .expect("legacy apps");
+
+        assert!(apps.claude);
+        assert!(apps.codex);
+        assert!(!apps.gemini);
+        assert!(apps.grokbuild);
+        assert!(apps.claude_desktop);
+        assert!(apps.opencode);
+        assert!(apps.openclaw);
+        assert!(apps.hermes);
+        assert!(super::universal_apps_json_needs_extended_fields(&json!({
+            "claude": true,
+            "codex": true,
+            "gemini": false
+        })));
+    }
+
+    #[test]
+    fn explicit_false_extended_apps_are_not_flipped_on_deserialize() {
+        let apps: super::UniversalProviderApps = serde_json::from_value(json!({
+            "claude": true,
+            "codex": true,
+            "gemini": true,
+            "grokbuild": false,
+            "claudeDesktop": false,
+            "opencode": false,
+            "openclaw": false,
+            "hermes": false
+        }))
+        .expect("explicit false apps");
+
+        assert!(!apps.grokbuild);
+        assert!(!apps.claude_desktop);
+        assert!(!apps.opencode);
+        assert!(!apps.openclaw);
+        assert!(!apps.hermes);
+    }
+
+    #[test]
+    fn universal_claude_desktop_routes_use_tiered_models() {
+        let mut universal = UniversalProvider::new(
+            "u1".to_string(),
+            "Universal".to_string(),
+            "newapi".to_string(),
+            "https://api.example.com".to_string(),
+            "api-key".to_string(),
+        );
+        universal.apps.claude_desktop = true;
+        universal.models.claude = Some(ClaudeModelConfig {
+            model: Some("claude-main".to_string()),
+            haiku_model: Some("claude-haiku-custom".to_string()),
+            sonnet_model: Some("claude-sonnet-custom".to_string()),
+            opus_model: Some("claude-opus-custom".to_string()),
+        });
+
+        let desktop = universal
+            .to_claude_desktop_provider()
+            .expect("claude desktop provider");
+        let routes = desktop
+            .meta
+            .as_ref()
+            .map(|m| &m.claude_desktop_model_routes)
+            .expect("routes");
+
+        assert_eq!(
+            routes.get("claude-sonnet-5").map(|r| r.model.as_str()),
+            Some("claude-sonnet-custom")
+        );
+        assert_eq!(
+            routes.get("claude-opus-4-8").map(|r| r.model.as_str()),
+            Some("claude-opus-custom")
+        );
+        assert_eq!(
+            routes.get("claude-haiku-4-5").map(|r| r.model.as_str()),
+            Some("claude-haiku-custom")
+        );
+        assert_eq!(
+            desktop
+                .settings_config
+                .pointer("/env/ANTHROPIC_MODEL")
+                .and_then(|v| v.as_str()),
+            Some("claude-main")
         );
     }
 

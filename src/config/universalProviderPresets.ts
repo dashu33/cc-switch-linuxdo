@@ -1,7 +1,7 @@
 /**
  * 统一供应商（Universal Provider）预设配置
  *
- * 统一供应商是跨应用共享的配置，修改后会自动同步到 Claude、Codex、Gemini 三个应用。
+ * 统一供应商是跨应用共享的配置，修改后会自动同步到所有模型应用。
  * 适用于 NewAPI 等支持多种协议的 API 网关。
  */
 
@@ -53,6 +53,9 @@ const NEWAPI_DEFAULT_MODELS: UniversalProviderModels = {
   gemini: {
     model: "gemini-3.5-flash",
   },
+  grokbuild: {
+    model: "grok-4.5",
+  },
 };
 
 /**
@@ -66,6 +69,11 @@ export const universalProviderPresets: UniversalProviderPreset[] = [
       claude: true,
       codex: true,
       gemini: true,
+      grokbuild: true,
+      claudeDesktop: true,
+      opencode: true,
+      openclaw: true,
+      hermes: true,
     },
     defaultModels: NEWAPI_DEFAULT_MODELS,
     websiteUrl: "https://www.newapi.pro",
@@ -81,6 +89,11 @@ export const universalProviderPresets: UniversalProviderPreset[] = [
       claude: true,
       codex: true,
       gemini: true,
+      grokbuild: true,
+      claudeDesktop: true,
+      opencode: true,
+      openclaw: true,
+      hermes: true,
     },
     defaultModels: NEWAPI_DEFAULT_MODELS,
     icon: "openai",

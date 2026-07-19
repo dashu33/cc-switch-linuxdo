@@ -57,6 +57,11 @@ export function UniversalProviderFormModal({
   const [claudeEnabled, setClaudeEnabled] = useState(true);
   const [codexEnabled, setCodexEnabled] = useState(true);
   const [geminiEnabled, setGeminiEnabled] = useState(true);
+  const [grokbuildEnabled, setGrokbuildEnabled] = useState(true);
+  const [claudeDesktopEnabled, setClaudeDesktopEnabled] = useState(true);
+  const [opencodeEnabled, setOpencodeEnabled] = useState(true);
+  const [openclawEnabled, setOpenclawEnabled] = useState(true);
+  const [hermesEnabled, setHermesEnabled] = useState(true);
 
   // 模型配置
   const [models, setModels] = useState<UniversalProviderModels>({});
@@ -78,6 +83,12 @@ export function UniversalProviderFormModal({
       setClaudeEnabled(editingProvider.apps.claude);
       setCodexEnabled(editingProvider.apps.codex);
       setGeminiEnabled(editingProvider.apps.gemini);
+      // 扩展端缺字段时按「启用」处理（与后端旧 JSON 迁移一致）；显式 false 保留
+      setGrokbuildEnabled(editingProvider.apps.grokbuild ?? true);
+      setClaudeDesktopEnabled(editingProvider.apps.claudeDesktop ?? true);
+      setOpencodeEnabled(editingProvider.apps.opencode ?? true);
+      setOpenclawEnabled(editingProvider.apps.openclaw ?? true);
+      setHermesEnabled(editingProvider.apps.hermes ?? true);
       setModels(editingProvider.models || {});
 
       // 尝试匹配预设
@@ -97,6 +108,11 @@ export function UniversalProviderFormModal({
       setClaudeEnabled(defaultPreset.defaultApps.claude);
       setCodexEnabled(defaultPreset.defaultApps.codex);
       setGeminiEnabled(defaultPreset.defaultApps.gemini);
+      setGrokbuildEnabled(defaultPreset.defaultApps.grokbuild ?? true);
+      setClaudeDesktopEnabled(defaultPreset.defaultApps.claudeDesktop ?? true);
+      setOpencodeEnabled(defaultPreset.defaultApps.opencode ?? true);
+      setOpenclawEnabled(defaultPreset.defaultApps.openclaw ?? true);
+      setHermesEnabled(defaultPreset.defaultApps.hermes ?? true);
       setModels(deepClone(defaultPreset.defaultModels));
     }
   }, [editingProvider, initialPreset, initialCredentials, isOpen]);
@@ -110,6 +126,11 @@ export function UniversalProviderFormModal({
         setClaudeEnabled(preset.defaultApps.claude);
         setCodexEnabled(preset.defaultApps.codex);
         setGeminiEnabled(preset.defaultApps.gemini);
+        setGrokbuildEnabled(preset.defaultApps.grokbuild ?? true);
+        setClaudeDesktopEnabled(preset.defaultApps.claudeDesktop ?? true);
+        setOpencodeEnabled(preset.defaultApps.opencode ?? true);
+        setOpenclawEnabled(preset.defaultApps.openclaw ?? true);
+        setHermesEnabled(preset.defaultApps.hermes ?? true);
         setModels(deepClone(preset.defaultModels));
       }
     },
@@ -118,7 +139,11 @@ export function UniversalProviderFormModal({
 
   // 更新模型配置
   const updateModel = useCallback(
-    (app: "claude" | "codex" | "gemini", field: string, value: string) => {
+    (
+      app: "claude" | "codex" | "gemini" | "grokbuild",
+      field: string,
+      value: string,
+    ) => {
       setModels((prev) => ({
         ...prev,
         [app]: {
@@ -207,6 +232,11 @@ requires_openai_auth = true`;
             claude: claudeEnabled,
             codex: codexEnabled,
             gemini: geminiEnabled,
+            grokbuild: grokbuildEnabled,
+            claudeDesktop: claudeDesktopEnabled,
+            opencode: opencodeEnabled,
+            openclaw: openclawEnabled,
+            hermes: hermesEnabled,
           },
           models,
         }
@@ -224,6 +254,11 @@ requires_openai_auth = true`;
         claude: claudeEnabled,
         codex: codexEnabled,
         gemini: geminiEnabled,
+        grokbuild: grokbuildEnabled,
+        claudeDesktop: claudeDesktopEnabled,
+        opencode: opencodeEnabled,
+        openclaw: openclawEnabled,
+        hermes: hermesEnabled,
       };
       provider.models = models;
       provider.websiteUrl = websiteUrl.trim() || undefined;
@@ -242,6 +277,11 @@ requires_openai_auth = true`;
     claudeEnabled,
     codexEnabled,
     geminiEnabled,
+    grokbuildEnabled,
+    claudeDesktopEnabled,
+    opencodeEnabled,
+    openclawEnabled,
+    hermesEnabled,
     models,
     selectedPreset,
     onSave,
@@ -266,6 +306,11 @@ requires_openai_auth = true`;
             claude: claudeEnabled,
             codex: codexEnabled,
             gemini: geminiEnabled,
+            grokbuild: grokbuildEnabled,
+            claudeDesktop: claudeDesktopEnabled,
+            opencode: opencodeEnabled,
+            openclaw: openclawEnabled,
+            hermes: hermesEnabled,
           },
           models,
         }
@@ -283,6 +328,11 @@ requires_openai_auth = true`;
         claude: claudeEnabled,
         codex: codexEnabled,
         gemini: geminiEnabled,
+        grokbuild: grokbuildEnabled,
+        claudeDesktop: claudeDesktopEnabled,
+        opencode: opencodeEnabled,
+        openclaw: openclawEnabled,
+        hermes: hermesEnabled,
       };
       provider.models = models;
       provider.websiteUrl = websiteUrl.trim() || undefined;
@@ -300,6 +350,11 @@ requires_openai_auth = true`;
     claudeEnabled,
     codexEnabled,
     geminiEnabled,
+    grokbuildEnabled,
+    claudeDesktopEnabled,
+    opencodeEnabled,
+    openclawEnabled,
+    hermesEnabled,
     models,
     selectedPreset,
   ]);
@@ -346,6 +401,8 @@ requires_openai_auth = true`;
       )}
     </>
   );
+  const hasEnabledPreview =
+    claudeEnabled || codexEnabled || geminiEnabled || grokbuildEnabled;
 
   return (
     <FullScreenPanel
@@ -500,6 +557,56 @@ requires_openai_auth = true`;
             </div>
             <div className="flex items-center justify-between rounded-lg border p-3">
               <div className="flex items-center gap-2">
+                <ProviderIcon icon="claude" name="Claude Desktop" size={20} />
+                <span className="font-medium">Claude Desktop</span>
+              </div>
+              <Switch
+                checked={claudeDesktopEnabled}
+                onCheckedChange={setClaudeDesktopEnabled}
+              />
+            </div>
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div className="flex items-center gap-2">
+                <ProviderIcon icon="grok" name="Grok Build" size={20} />
+                <span className="font-medium">Grok Build</span>
+              </div>
+              <Switch
+                checked={grokbuildEnabled}
+                onCheckedChange={setGrokbuildEnabled}
+              />
+            </div>
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div className="flex items-center gap-2">
+                <ProviderIcon icon="opencode" name="OpenCode" size={20} />
+                <span className="font-medium">OpenCode</span>
+              </div>
+              <Switch
+                checked={opencodeEnabled}
+                onCheckedChange={setOpencodeEnabled}
+              />
+            </div>
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div className="flex items-center gap-2">
+                <ProviderIcon icon="openclaw" name="OpenClaw" size={20} />
+                <span className="font-medium">OpenClaw</span>
+              </div>
+              <Switch
+                checked={openclawEnabled}
+                onCheckedChange={setOpenclawEnabled}
+              />
+            </div>
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div className="flex items-center gap-2">
+                <ProviderIcon icon="hermes" name="Hermes" size={20} />
+                <span className="font-medium">Hermes</span>
+              </div>
+              <Switch
+                checked={hermesEnabled}
+                onCheckedChange={setHermesEnabled}
+              />
+            </div>
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div className="flex items-center gap-2">
                 <ProviderIcon icon="openai" name="Codex" size={20} />
                 <span className="font-medium">OpenAI Codex</span>
               </div>
@@ -636,10 +743,31 @@ requires_openai_auth = true`;
               </div>
             </div>
           )}
+
+          {grokbuildEnabled && (
+            <div className="space-y-3 rounded-lg border p-4">
+              <div className="flex items-center gap-2 font-medium">
+                <ProviderIcon icon="grok" name="Grok Build" size={16} />
+                Grok Build
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">
+                  {t("universalProvider.model", { defaultValue: "模型" })}
+                </Label>
+                <Input
+                  value={models.grokbuild?.model || ""}
+                  onChange={(e) =>
+                    updateModel("grokbuild", "model", e.target.value)
+                  }
+                  placeholder="grok-4.5"
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         {/* 配置 JSON 预览 */}
-        {isEditMode && (claudeEnabled || codexEnabled || geminiEnabled) && (
+        {isEditMode && hasEnabledPreview && (
           <div className="space-y-4">
             <Label>
               {t("universalProvider.configJsonPreview", {
@@ -711,7 +839,7 @@ requires_openai_auth = true`;
           defaultValue: "同步统一供应商",
         })}
         message={t("universalProvider.syncConfirmDescription", {
-          defaultValue: `同步 "${name}" 将会覆盖 Claude、Codex 和 Gemini 中关联的供应商配置。确定要继续吗？`,
+          defaultValue: `同步 "${name}" 将会覆盖所有已启用应用中的关联供应商配置。确定要继续吗？`,
           name: name,
         })}
         confirmText={t("universalProvider.saveAndSync", {

@@ -17,7 +17,7 @@
 | 个人更新源与主线            | [个人更新源与主线](./个人更新源与主线/)                     | 已落地 | 更新源/发布/开发统一到 dashu33 与 main；upstream-sync 跟踪作者 | 否                          |
 | Provider 排序、子菜单与序号 | [供应商排序与子菜单](./供应商排序与子菜单/)                 | 已落地 | 新增默认落底；排序=维度+升/降序（含最近使用/可用性）；卡片稳定序号     | **是**                      |
 | 供应商行 UI 压缩与筛选     | [供应商行UI压缩与筛选](./供应商行UI压缩与筛选/) | 已落地 | 左侧 rail 压缩、模型 LOGO、状态/失败原因筛选及按状态清理；含 716 备份点 | 否                          |
-| NewAPI 快速导入             | [NewAPI快速导入](./NewAPI快速导入/)                         | 已落地 | 剪贴板 URL+Key 直接创建供应商，支持半量等待与 Base64 Key         | 否                          |
+| NewAPI 快速导入             | [NewAPI快速导入](./NewAPI快速导入/)                         | 已落地 | 剪贴板 URL+Key 直接创建并同步全部八个模型客户端，支持半量等待与 Base64 Key | **是** |
 | Codex/Claude 供应商快速调整 | [Codex供应商快速调整](./Codex供应商快速调整/)               | 已落地 | 卡片就地修改上游格式与模型（Codex + Claude/Desktop）             | 否                          |
 | 跨应用复制供应商            | [跨应用复制供应商](./跨应用复制供应商/)                     | 已落地 | 将可移植凭证转换并复制到其他应用                                 | 否                          |
 | GrokBuild 供应商对齐 Codex | [GrokBuild供应商对齐Codex](./GrokBuild供应商对齐Codex/) | 已落地 | 卡片快捷/需路由/拉模型对齐 Codex；代理补齐 Responses usage/error/sequence_number | **是** |

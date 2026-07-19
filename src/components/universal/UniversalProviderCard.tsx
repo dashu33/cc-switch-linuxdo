@@ -24,8 +24,13 @@ export function UniversalProviderCard({
   // 获取启用的应用列表
   const enabledApps: string[] = [
     provider.apps.claude ? "Claude" : null,
+    provider.apps.claudeDesktop ? "Claude Desktop" : null,
     provider.apps.codex ? "Codex" : null,
     provider.apps.gemini ? "Gemini" : null,
+    provider.apps.grokbuild ? "Grok Build" : null,
+    provider.apps.opencode ? "OpenCode" : null,
+    provider.apps.openclaw ? "OpenClaw" : null,
+    provider.apps.hermes ? "Hermes" : null,
   ].filter((app): app is string => app !== null);
 
   return (

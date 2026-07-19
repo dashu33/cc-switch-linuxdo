@@ -538,6 +538,11 @@ export interface UniversalProviderApps {
   claude: boolean;
   codex: boolean;
   gemini: boolean;
+  grokbuild: boolean;
+  claudeDesktop: boolean;
+  opencode: boolean;
+  openclaw: boolean;
+  hermes: boolean;
 }
 
 // Claude 模型配置
@@ -559,11 +564,16 @@ export interface GeminiModelConfig {
   model?: string;
 }
 
+export interface GrokBuildModelConfig {
+  model?: string;
+}
+
 // 各应用的模型配置
 export interface UniversalProviderModels {
   claude?: ClaudeModelConfig;
   codex?: CodexModelConfig;
   gemini?: GeminiModelConfig;
+  grokbuild?: GrokBuildModelConfig;
 }
 
 // 统一供应商（跨应用共享配置）
@@ -735,4 +745,3 @@ export interface HermesMemoryLimits {
   memoryEnabled: boolean;
   userEnabled: boolean;
 }
-

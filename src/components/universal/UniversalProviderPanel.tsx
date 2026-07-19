@@ -122,10 +122,17 @@ export function UniversalProviderPanel() {
       loadProviders();
     } catch (error) {
       console.error("Failed to delete universal provider:", error);
+      const detail =
+        error instanceof Error
+          ? error.message
+          : typeof error === "string"
+            ? error
+            : "";
       toast.error(
-        t("universalProvider.deleteError", {
-          defaultValue: "删除统一供应商失败",
-        }),
+        detail ||
+          t("universalProvider.deleteError", {
+            defaultValue: "删除统一供应商失败",
+          }),
       );
     } finally {
       setDeleteConfirm({ open: false, id: "", name: "" });
@@ -143,10 +150,17 @@ export function UniversalProviderPanel() {
       );
     } catch (error) {
       console.error("Failed to sync universal provider:", error);
+      const detail =
+        error instanceof Error
+          ? error.message
+          : typeof error === "string"
+            ? error
+            : "";
       toast.error(
-        t("universalProvider.syncError", {
-          defaultValue: "同步统一供应商失败",
-        }),
+        detail ||
+          t("universalProvider.syncError", {
+            defaultValue: "同步统一供应商失败",
+          }),
       );
     } finally {
       setSyncConfirm({ open: false, id: "", name: "" });

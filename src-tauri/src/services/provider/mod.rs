@@ -11,6 +11,7 @@ use indexmap::IndexMap;
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
+use std::str::FromStr;
 
 use crate::app_config::AppType;
 use crate::database::{validate_cost_multiplier, validate_pricing_source};
@@ -3883,83 +3884,231 @@ impl ProviderService {
     }
 
     /// 删除统一供应商
+    ///
+    /// 先清理各端子供应商与 additive live（含密钥），全部成功后再删统一记录。
+    /// 任一 live/DB 清理失败时保留统一记录并返回错误，避免界面成功但磁盘仍残留密钥。
     pub fn delete_universal(state: &AppState, id: &str) -> Result<bool, AppError> {
-        // 获取统一供应商（用于删除生成的子供应商）
-        let provider = state.db.get_universal_provider(id)?;
+        let Some(_provider) = state.db.get_universal_provider(id)? else {
+            return Ok(false);
+        };
 
-        // 删除统一供应商
-        state.db.delete_universal_provider(id)?;
+        // 始终尝试清理全部可能的子 ID（不依赖当前 apps 开关），
+        // 避免曾启用后关闭、或部分删除后残留孤儿 live/密钥。
+        let mut errors: Vec<String> = Vec::new();
 
-        // 删除生成的子供应商
-        if let Some(p) = provider {
-            if p.apps.claude {
-                let claude_id = format!("universal-claude-{id}");
-                let _ = state.db.delete_provider("claude", &claude_id);
+        // Additive apps: live first, then DB (same atomicity order as delete_provider).
+        for (app_type, remove_live) in [
+            (
+                "opencode",
+                Some(remove_opencode_provider_from_live as fn(&str) -> Result<(), AppError>),
+            ),
+            (
+                "openclaw",
+                Some(remove_openclaw_provider_from_live as fn(&str) -> Result<(), AppError>),
+            ),
+            (
+                "hermes",
+                Some(remove_hermes_provider_from_live as fn(&str) -> Result<(), AppError>),
+            ),
+        ] {
+            let child_id = format!("universal-{app_type}-{id}");
+            if let Some(remove_live) = remove_live {
+                if let Err(e) = remove_live(&child_id) {
+                    errors.push(format!("{app_type} live: {e}"));
+                    continue;
+                }
             }
-            if p.apps.codex {
-                let codex_id = format!("universal-codex-{id}");
-                let _ = state.db.delete_provider("codex", &codex_id);
-            }
-            if p.apps.gemini {
-                let gemini_id = format!("universal-gemini-{id}");
-                let _ = state.db.delete_provider("gemini", &gemini_id);
+            if let Err(e) = state.db.delete_provider(app_type, &child_id) {
+                errors.push(format!("{app_type} db: {e}"));
             }
         }
 
+        for app_type in [
+            "claude",
+            "codex",
+            "gemini",
+            "grokbuild",
+            "claude-desktop",
+        ] {
+            let child_id = format!("universal-{app_type}-{id}");
+            if let Err(e) = state.db.delete_provider(app_type, &child_id) {
+                errors.push(format!("{app_type} db: {e}"));
+            }
+        }
+
+        if !errors.is_empty() {
+            return Err(AppError::Message(format!(
+                "删除统一供应商子配置失败，已保留统一记录以便重试: {}",
+                errors.join("; ")
+            )));
+        }
+
+        state.db.delete_universal_provider(id)?;
         Ok(true)
     }
 
     /// 同步统一供应商到各应用
+    ///
+    /// 各端独立执行：单端失败不会阻断后续端；additive live 写入失败会回滚该端 DB 变更。
+    /// 若存在任一失败，返回聚合错误（可能已有部分端成功）。
     pub fn sync_universal_to_apps(state: &AppState, id: &str) -> Result<bool, AppError> {
         let provider = state
             .db
             .get_universal_provider(id)?
             .ok_or_else(|| AppError::Message(format!("统一供应商 {id} 不存在")))?;
 
-        // 同步到 Claude
-        if let Some(mut claude_provider) = provider.to_claude_provider() {
-            // 合并已有配置
-            if let Some(existing) = state.db.get_provider_by_id(&claude_provider.id, "claude")? {
-                let mut merged = existing.settings_config.clone();
-                Self::merge_json(&mut merged, &claude_provider.settings_config);
-                claude_provider.settings_config = merged;
-            }
-            state.db.save_provider("claude", &claude_provider)?;
-        } else {
-            // 如果禁用了 Claude，删除对应的子供应商
-            let claude_id = format!("universal-claude-{id}");
-            let _ = state.db.delete_provider("claude", &claude_id);
+        let mut errors: Vec<String> = Vec::new();
+
+        let push_err = |errors: &mut Vec<String>, app: &str, err: AppError| {
+            errors.push(format!("{app}: {err}"));
+        };
+
+        if let Err(e) = Self::sync_universal_child(
+            state,
+            "claude",
+            format!("universal-claude-{id}"),
+            provider.to_claude_provider(),
+            None,
+        ) {
+            push_err(&mut errors, "claude", e);
+        }
+        if let Err(e) = Self::sync_universal_child(
+            state,
+            "codex",
+            format!("universal-codex-{id}"),
+            provider.to_codex_provider(),
+            None,
+        ) {
+            push_err(&mut errors, "codex", e);
+        }
+        if let Err(e) = Self::sync_universal_child(
+            state,
+            "gemini",
+            format!("universal-gemini-{id}"),
+            provider.to_gemini_provider(),
+            None,
+        ) {
+            push_err(&mut errors, "gemini", e);
+        }
+        if let Err(e) = Self::sync_universal_child(
+            state,
+            "grokbuild",
+            format!("universal-grokbuild-{id}"),
+            provider.to_grokbuild_provider(),
+            None,
+        ) {
+            push_err(&mut errors, "grokbuild", e);
+        }
+        if let Err(e) = Self::sync_universal_child(
+            state,
+            "claude-desktop",
+            format!("universal-claude-desktop-{id}"),
+            provider.to_claude_desktop_provider(),
+            None,
+        ) {
+            push_err(&mut errors, "claude-desktop", e);
+        }
+        if let Err(e) = Self::sync_universal_child(
+            state,
+            "opencode",
+            format!("universal-opencode-{id}"),
+            provider.to_opencode_provider(),
+            Some(remove_opencode_provider_from_live),
+        ) {
+            push_err(&mut errors, "opencode", e);
+        }
+        if let Err(e) = Self::sync_universal_child(
+            state,
+            "openclaw",
+            format!("universal-openclaw-{id}"),
+            provider.to_openclaw_provider(),
+            Some(remove_openclaw_provider_from_live),
+        ) {
+            push_err(&mut errors, "openclaw", e);
+        }
+        if let Err(e) = Self::sync_universal_child(
+            state,
+            "hermes",
+            format!("universal-hermes-{id}"),
+            provider.to_hermes_provider(),
+            Some(remove_hermes_provider_from_live),
+        ) {
+            push_err(&mut errors, "hermes", e);
         }
 
-        // 同步到 Codex
-        if let Some(mut codex_provider) = provider.to_codex_provider() {
-            // 合并已有配置
-            if let Some(existing) = state.db.get_provider_by_id(&codex_provider.id, "codex")? {
-                let mut merged = existing.settings_config.clone();
-                Self::merge_json(&mut merged, &codex_provider.settings_config);
-                codex_provider.settings_config = merged;
-            }
-            state.db.save_provider("codex", &codex_provider)?;
-        } else {
-            let codex_id = format!("universal-codex-{id}");
-            let _ = state.db.delete_provider("codex", &codex_id);
-        }
-
-        // 同步到 Gemini
-        if let Some(mut gemini_provider) = provider.to_gemini_provider() {
-            // 合并已有配置
-            if let Some(existing) = state.db.get_provider_by_id(&gemini_provider.id, "gemini")? {
-                let mut merged = existing.settings_config.clone();
-                Self::merge_json(&mut merged, &gemini_provider.settings_config);
-                gemini_provider.settings_config = merged;
-            }
-            state.db.save_provider("gemini", &gemini_provider)?;
-        } else {
-            let gemini_id = format!("universal-gemini-{id}");
-            let _ = state.db.delete_provider("gemini", &gemini_id);
+        if !errors.is_empty() {
+            return Err(AppError::Message(format!(
+                "统一供应商同步部分失败: {}",
+                errors.join("; ")
+            )));
         }
 
         Ok(true)
+    }
+
+    fn sync_universal_child(
+        state: &AppState,
+        app_type: &str,
+        child_id: String,
+        child: Option<Provider>,
+        remove_live: Option<fn(&str) -> Result<(), AppError>>,
+    ) -> Result<(), AppError> {
+        let Some(mut child) = child else {
+            if let Some(remove_live) = remove_live {
+                remove_live(&child_id)?;
+            }
+            state.db.delete_provider(app_type, &child_id)?;
+            return Ok(());
+        };
+
+        let previous = state.db.get_provider_by_id(&child.id, app_type)?;
+        if let Some(ref existing) = previous {
+            let mut merged = existing.settings_config.clone();
+            Self::merge_json(&mut merged, &child.settings_config);
+            child.settings_config = merged;
+        }
+
+        let is_additive = matches!(app_type, "opencode" | "openclaw" | "hermes");
+
+        // Additive：先写 live 再落 DB，live 失败时 DB 保持原状。
+        // 非 additive：仅写 DB。
+        if is_additive {
+            // 临时用合并后的 child 写 live（不依赖 DB 已保存）
+            write_live_with_common_config(
+                state.db.as_ref(),
+                &AppType::from_str(app_type)?,
+                &child,
+            )?;
+            if let Err(e) = state.db.save_provider(app_type, &child) {
+                // live 已写入但 DB 失败：尽量从 live 移除本次写入，避免只剩磁盘密钥
+                if let Some(remove_live) = remove_live {
+                    if let Err(live_err) = remove_live(&child.id) {
+                        log::warn!(
+                            "Failed to roll back additive live for {} after DB save error: {live_err}",
+                            child.id
+                        );
+                    }
+                }
+                // 若此前已有 live 条目且 previous 存在，尝试恢复旧 live
+                if let Some(prev) = previous.as_ref() {
+                    if let Err(restore_err) = write_live_with_common_config(
+                        state.db.as_ref(),
+                        &AppType::from_str(app_type)?,
+                        prev,
+                    ) {
+                        log::warn!(
+                            "Failed to restore previous additive live for {}: {restore_err}",
+                            child.id
+                        );
+                    }
+                }
+                return Err(e);
+            }
+            return Ok(());
+        }
+
+        state.db.save_provider(app_type, &child)?;
+        Ok(())
     }
 
     /// 递归合并 JSON：base 为底，patch 覆盖同名字段

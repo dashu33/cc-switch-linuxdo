@@ -9,7 +9,14 @@
 | `src/utils/parseNewApiClipboard.ts` | 剪贴板解析核心：URL/Key 提取、Base64 解密、半量解析、合并 |
 | `src/utils/parseNewApiClipboard.test.ts` | 单元测试 |
 | `src/App.tsx` | 按钮 UI、等待状态、轮询、创建/同步流程 |
-| `src/components/universal/UniversalProviderFormModal.tsx` | 预留 quick-import prefill 类型（表单路径；快速导入主路径不依赖打开表单） |
+| `src/components/universal/UniversalProviderFormModal.tsx` | 统一供应商编辑页；八端开关与共享模型配置 |
+| `src/components/universal/UniversalProviderCard.tsx` | 展示八端启用状态 |
+| `src/components/providers/AddProviderDialog.tsx` | 所有应用均开放统一供应商入口 |
+| `src/types.ts` / `src/config/universalProviderPresets.ts` | 统一供应商目标应用与默认模型定义 |
+| `tests/config/universalProviderPresets.test.ts` | NewAPI 默认八端同步目标回归测试 |
+| `src-tauri/src/provider.rs` | 统一供应商到八端转换；`UniversalProviderApps` 旧 JSON 扩展端迁移；Desktop 三档路由 |
+| `src-tauri/src/database/dao/universal_providers.rs` | 统一供应商 CRUD；读取时检测缺字段并回写 |
+| `src-tauri/src/services/provider/mod.rs` | `sync_universal_to_apps` / `delete_universal`；additive live 优先与删除失败可重试 |
 | `src/i18n/locales/zh.json` 等 | `provider.quickImport*` 文案 |
 
 ## 调用链
@@ -28,6 +35,7 @@ Header「快速导入」按钮
             │            ├─ provider.name = `M月D日 HH:mm {baseUrl}`
             │            ├─ universalProvidersApi.upsert
             │            └─ universalProvidersApi.sync + invalidate providers
+            │                 └─ 八个应用的原生子供应商（additive 应用同时写 live）
             └─ 半量？→ setQuickImportPending + 800ms 轮询剪贴板
 ```
 
@@ -71,6 +79,37 @@ Header「快速导入」按钮
 - 等待中按钮边框：琥珀色 `border-amber-500/70`
 - 等待文案：按钮旁 `motion.span`
 
+## 关键符号（统一供应商一致性）
+
+| 符号 | 职责 |
+|------|------|
+| `UniversalProviderApps::deserialize` | 缺扩展端字段 → true；显式 false 保留 |
+| `universal_apps_json_needs_extended_fields` | 判断是否需要落盘迁移 |
+| `Database::get_all_universal_providers` | 读时迁移并回写完整 apps |
+| `ProviderService::delete_universal` | 先清 live/子项，失败保留统一记录 |
+| `ProviderService::sync_universal_to_apps` | 八端独立同步，聚合错误 |
+| `ProviderService::sync_universal_child` | additive：live→DB；失败可回滚 |
+| `UniversalProvider::to_claude_desktop_provider` | sonnet/opus/haiku 分档路由 |
+
+## 验证命令
+
+```powershell
+# 前端预设与缺字段归一
+pnpm exec vitest run tests/config/universalProviderPresets.test.ts
+
+# 后端单元（provider + DAO 迁移逻辑）；若本机 cargo test 遇 0xc0000139 至少 cargo check
+cd src-tauri
+cargo test --lib provider::tests::legacy_universal_apps_json_enables_missing_extended_apps -- --nocapture
+cargo test --lib provider::tests::universal_claude_desktop_routes_use_tiered_models -- --nocapture
+cargo test --lib database::dao::universal_providers -- --nocapture
+```
+
+## 外部格式核验依据
+
+生产转换的 URL/字段约束来自实际客户端与官方源码，而非本仓库文档：NewAPI `router/relay-router.go`（`/v1` 与 `/v1beta` 路由）、Claude Code `2.1.211` bundle、Claude Desktop `1.11187.4.0` AppX `app.asar`、Gemini CLI commit `acae7124bdd849e554eaa5e090199a0cf08cd782` 与 `@google/genai@1.30.0`、Grok Build `0.2.103` 本机配置/内置配置说明、OpenCode `1.17.15` provider schema、OpenClaw `zod-schema.core.ts`、Hermes `config.py` 与 `runtime_provider.py`。对应只读快照在 `C:\WINDOWS\TEMP\codex-vendor-*`；Claude Desktop 安装包位于本机 WindowsApps 目录。
+
+关键实现：`src-tauri/src/provider.rs` 的 `anthropic_base_url` / `gemini_base_url` 避免官方客户端重复拼接版本路径；`to_hermes_provider` 显式写入 `api_mode: chat_completions`。
+
 ## 回归检查清单
 
 - [ ] 同时含 URL+Key 的剪贴板 → 一次点击创建
@@ -83,6 +122,11 @@ Header「快速导入」按钮
 - [ ] 创建后名称是「日期时间+URL」
 - [ ] `websiteUrl === baseUrl`
 - [ ] 同步成功后供应商列表刷新
+- [ ] 升级前仅含 claude/codex/gemini 的旧统一供应商：打开/同步后扩展五端为启用
+- [ ] 用户曾显式关闭 openclaw 等：升级后仍保持关闭
+- [ ] 删除时 live 清理失败 → toast 错误且统一记录仍在，可重试
+- [ ] 同步时单端 live 失败 → 其它端仍尝试；错误信息含失败端
+- [ ] Claude Desktop 子供应商 meta 路由：Opus/Haiku 不等于仅主模型
 
 ## 自动探测
 

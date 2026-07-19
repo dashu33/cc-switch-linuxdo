@@ -2,7 +2,7 @@
 
 > 维护目录：\`自用特性/NewAPI快速导入/\`
 
-> 文档状态：最后同步：API/KEY 标签解析 + Base64 解密 + 默认 `meta.apiFormat=openai_chat`
+> 文档状态：最后同步：八端一致性（旧 JSON 扩展端迁移 / 删除失败可重试 / 同步分端聚合 / Desktop 三档模型）
 
 ## 目标
 
@@ -12,6 +12,7 @@
 2. 解析出 `BASE URL` + `API KEY`
 3. 以 **统一供应商 / NewAPI** 预设 **直接创建并同步**
 4. **不打开** NewAPI 表单让用户手填
+5. 默认同步到全部八个模型客户端：Claude、Claude Desktop、Codex、Gemini、Grok Build、OpenCode、OpenClaw、Hermes
 
 产品路径语义：`添加供应商 → 统一供应商 → NewAPI`  
 实现上走 `findPresetByType("newapi")` + `createUniversalProviderFromPreset` + `universalProvidersApi.upsert/sync`。
@@ -46,6 +47,7 @@
 | 字段 | 规则 |
 |------|------|
 | 供应商类型 | NewAPI 预设（`providerType: "newapi"`） |
+| 同步目标 | 全部八个模型客户端（默认全开，可在统一供应商编辑页逐项关闭） |
 | 名称 | `M月D日 HH:mm {baseUrl}`（例：`7月14日 23:40 https://sub2.zmoon.top/v1`） |
 | websiteUrl | 等于 `baseUrl`（不再写死官网） |
 | baseUrl / apiKey | 解析结果 |
@@ -149,6 +151,35 @@ pnpm exec vitest run src/utils/parseNewApiClipboard.test.ts
 - 需系统剪贴板权限（`@tauri-apps/plugin-clipboard-manager` 的 `readText`）
 - 名称用当前本地时间，不使用剪贴板里的产品名（产品决策）
 - 不打开编辑表单；失败时 toast，不静默吞错
+- Grok Build 使用独立 TOML 子供应商（`universal-grokbuild-*`），模型默认 `grok-4.5`
+- Claude Desktop 复用 Claude 的 **sonnet/opus/haiku 三档** 模型做 proxy 路由（不是全部指向主模型）；OpenCode/OpenClaw/Hermes 复用 Codex/OpenAI 模型
+- OpenCode/OpenClaw/Hermes 同步时先写 additive live 再落 DB；live 失败不落库，且不阻断其余端；任一端失败返回聚合错误
+- 删除统一供应商时先清理全部可能的子供应商与 live 密钥，**全部成功后才删统一记录**；清理失败保留记录并提示错误以便重试
+- 升级前创建的旧 JSON 若缺少 `grokbuild` / `claudeDesktop` / `opencode` / `openclaw` / `hermes` 字段：读取时按「启用」迁移并回写，而不是 `false`
+
+## 外部格式核验（2026-07-20）
+
+本特性的八端转换不是按本仓库注释推断，已对照实际配置与客户端实现核验：
+
+- NewAPI 官方路由源码确认 OpenAI Chat/Responses 为 `/v1/*`、Anthropic 为 `/v1/messages`、Gemini 原生为 `/v1beta/models/*`。
+- Claude Code `2.1.211` 实际 bundle 使用 `ANTHROPIC_BASE_URL` 并追加 `/v1/messages`，所以 Claude 目标会去掉输入 URL 末尾 `/v1`。
+- Claude Desktop `1.11187.4.0` 本机 AppX 的 `app.asar` schema 声明 3P gateway 使用 `inferenceGatewayBaseUrl`、`inferenceGatewayAuthScheme` 与 `inferenceModels`，模型项为 `name`/`labelOverride`/`supports1m`；当前 Desktop proxy profile 与该形状一致。
+- Gemini CLI 官方源码（commit `acae7124bdd849e554eaa5e090199a0cf08cd782`）把 `GOOGLE_GEMINI_BASE_URL` 传给 `@google/genai`；`@google/genai@1.30.0` 的实际 URL 构造为 `baseUrl/v1beta/models/...`，所以 Gemini 目标会去掉末尾 `/v1` 或 `/v1beta`。
+- Grok Build `0.2.103` 的实际 `~/.grok/config.toml` 与内置配置说明使用 `[models].default`、`[model.<profile>]`、`model`、`base_url`、`api_backend = "responses"`。
+- OpenCode `1.17.15` 实际配置与官方 provider schema 使用 `npm: "@ai-sdk/openai-compatible"`、`options.baseURL`/`apiKey`、`models.<id>.name`。
+- OpenClaw 官方 `ModelProviderSchema` 要求 `baseUrl`、`apiKey`、`api: "openai-completions"` 与模型数组中的 `id`/`name`；当前写入形状符合该 schema。
+- Hermes 官方 `config.py` / `runtime_provider.py` 接受 `base_url`、`api_key`、`model`、`models` 和 `api_mode`，默认 OpenAI 兼容线路为 `chat_completions`；当前写入显式固定该模式，模型数组中的 `name` 会由 Hermes 正常化器作为显示字段丢弃。
+
+核验用的只读源码快照位于 `C:\WINDOWS\TEMP\codex-vendor-*`，未加入本仓库。
+
+## 增量：统一供应商八端一致性修复
+
+| 问题 | 处理 |
+|------|------|
+| 旧记录缺扩展端字段 → 永远关 | `UniversalProviderApps` 自定义反序列化 + DAO 回写迁移；前端 `?? true` |
+| 删除成功但 live 残留密钥 | 先 live/DB 清理，失败则不删统一记录 |
+| 八端同步部分成功被中断 | 各端独立收集错误；additive live 先写后 DB |
+| Desktop 三档全走主模型 | `to_claude_desktop_provider` 分别映射 sonnet/opus/haiku |
 
 ## 相关文档
 
@@ -179,4 +210,3 @@ sk-5d80删7485003掉463577653d中9122445fc162fb7文b8c35928d966
 - 标签行若是纯中文说明（如 `key：删掉中文！！！`）→ **忽略**，继续扫后面真正的 key
 - `sk-` 中间夹中文/全角标点 → 自动剔除后拼接
 - 标签后同一行就是带噪声的 sk key → 同样清洗
-
