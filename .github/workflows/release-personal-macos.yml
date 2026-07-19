@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing git tag to attach assets to (e.g. v3.17.1-personal.1). Empty = use run id suffix only artifacts.'
+        description: 'Existing git tag to attach assets to (e.g. v3.17.2-personal.1). Empty = use run id suffix only artifacts.'
         required: false
         default: ''
 
@@ -324,7 +324,7 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --latest \
               --title "CC Switch ${TAG} (personal)" \
-              --notes "Personal latest (Windows + unsigned macOS). See 自用特性/发布说明-v3.17.1-自用版.md."
+              --notes "Personal latest (Windows + unsigned macOS). See 自用特性/发布说明-v3.17.2-自用版.md."
           fi
           gh release upload "$TAG" release-assets/* --clobber --repo "$GITHUB_REPOSITORY"
           echo "✅ Uploaded unsigned macOS assets to release $TAG"
