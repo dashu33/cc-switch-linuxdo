@@ -41,15 +41,40 @@ describe("modelBrandIcon", () => {
   });
 
   it("prefers non-lite top models when versions are close", () => {
-    expect(
-      pickTopModelId(["grok-4-mini", "grok-4", "grok-3"]),
-    ).toBe("grok-4");
+    expect(pickTopModelId(["grok-4-mini", "grok-4", "grok-3"])).toBe("grok-4");
     expect(
       resolveTopModelForBrand(
         ["claude-haiku-4", "claude-sonnet-4", "claude-opus-4"],
         "claude",
       ),
     ).toBe("claude-opus-4");
+  });
+
+  it("selects the latest flagship model without treating dates as versions", () => {
+    expect(
+      pickTopModelId([
+        "claude-haiku-4-5-20251001",
+        "claude-sonnet-4-5-20250929",
+        "claude-opus-4-8",
+        "claude-opus-4-6-20260205",
+      ]),
+    ).toBe("claude-opus-4-8");
+
+    expect(
+      pickTopModelId(["gpt-4o-2024-11-20", "gpt-5.5-mini", "gpt-5.6-sol"]),
+    ).toBe("gpt-5.6-sol");
+
+    expect(
+      pickTopModelId([
+        "gemini-2.5-pro",
+        "gemini-3-pro-preview",
+        "gemini-3-flash-preview",
+      ]),
+    ).toBe("gemini-3-pro-preview");
+
+    expect(pickTopModelId(["grok-4.1-fast", "grok-4.5", "grok-4-202507"])).toBe(
+      "grok-4.5",
+    );
   });
 
   it("keeps brand diversity when sampling model ids", () => {
@@ -67,4 +92,3 @@ describe("modelBrandIcon", () => {
     expect(sampled.length).toBe(10);
   });
 });
-

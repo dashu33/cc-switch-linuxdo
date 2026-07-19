@@ -9,15 +9,60 @@ const MODEL_BRAND_RULES: Array<{
   iconColor?: string;
   brand: string;
 }> = [
-  { brand: "openai", pattern: /\b(gpt|o[1-9]|chatgpt|openai)\b/i, icon: "openai", iconColor: "#10A37F" },
-  { brand: "claude", pattern: /\b(claude|anthropic|sonnet|opus|haiku)\b/i, icon: "claude", iconColor: "#D4915D" },
-  { brand: "gemini", pattern: /\b(gemini|gemma|google)\b/i, icon: "gemini", iconColor: "#4285F4" },
-  { brand: "deepseek", pattern: /\b(deepseek)\b/i, icon: "deepseek", iconColor: "#1E88E5" },
-  { brand: "qwen", pattern: /\b(qwen|qwq|tongyi)\b/i, icon: "qwen", iconColor: "#FF6A00" },
-  { brand: "kimi", pattern: /\b(kimi|moonshot)\b/i, icon: "kimi", iconColor: "#6366F1" },
-  { brand: "zhipu", pattern: /\b(glm|zhipu|chatglm)\b/i, icon: "zhipu", iconColor: "#0F62FE" },
-  { brand: "mistral", pattern: /\b(mistral|mixtral|codestral)\b/i, icon: "mistral", iconColor: "#FF7000" },
-  { brand: "meta", pattern: /\b(llama|meta-llama|meta)\b/i, icon: "meta", iconColor: "#0081FB" },
+  {
+    brand: "openai",
+    pattern: /\b(gpt|o[1-9]|chatgpt|openai)\b/i,
+    icon: "openai",
+    iconColor: "#10A37F",
+  },
+  {
+    brand: "claude",
+    pattern: /\b(claude|anthropic|sonnet|opus|haiku)\b/i,
+    icon: "claude",
+    iconColor: "#D4915D",
+  },
+  {
+    brand: "gemini",
+    pattern: /\b(gemini|gemma|google)\b/i,
+    icon: "gemini",
+    iconColor: "#4285F4",
+  },
+  {
+    brand: "deepseek",
+    pattern: /\b(deepseek)\b/i,
+    icon: "deepseek",
+    iconColor: "#1E88E5",
+  },
+  {
+    brand: "qwen",
+    pattern: /\b(qwen|qwq|tongyi)\b/i,
+    icon: "qwen",
+    iconColor: "#FF6A00",
+  },
+  {
+    brand: "kimi",
+    pattern: /\b(kimi|moonshot)\b/i,
+    icon: "kimi",
+    iconColor: "#6366F1",
+  },
+  {
+    brand: "zhipu",
+    pattern: /\b(glm|zhipu|chatglm)\b/i,
+    icon: "zhipu",
+    iconColor: "#0F62FE",
+  },
+  {
+    brand: "mistral",
+    pattern: /\b(mistral|mixtral|codestral)\b/i,
+    icon: "mistral",
+    iconColor: "#FF7000",
+  },
+  {
+    brand: "meta",
+    pattern: /\b(llama|meta-llama|meta)\b/i,
+    icon: "meta",
+    iconColor: "#0081FB",
+  },
   // Grok / xAI: cover grok-*, xai/*, x-ai/*, xai-*, grok4, "Grok 4" etc.
   {
     brand: "grok",
@@ -26,15 +71,60 @@ const MODEL_BRAND_RULES: Array<{
     icon: "grok",
     iconColor: "#000000",
   },
-  { brand: "minimax", pattern: /\b(minimax|abab)\b/i, icon: "minimax", iconColor: "#FF6B6B" },
-  { brand: "doubao", pattern: /\b(doubao|byteplus|volc)\b/i, icon: "doubao", iconColor: "#3B82F6" },
-  { brand: "hunyuan", pattern: /\b(hunyuan)\b/i, icon: "hunyuan", iconColor: "#00A4FF" },
-  { brand: "cohere", pattern: /\b(cohere|command-r)\b/i, icon: "cohere", iconColor: "#39594D" },
-  { brand: "perplexity", pattern: /\b(perplexity|sonar)\b/i, icon: "perplexity", iconColor: "#20808D" },
-  { brand: "ollama", pattern: /\b(ollama)\b/i, icon: "ollama", iconColor: "#000000" },
-  { brand: "openrouter", pattern: /\b(openrouter)\b/i, icon: "openrouter", iconColor: "#6566F1" },
-  { brand: "copilot", pattern: /\b(copilot|github)\b/i, icon: "copilot", iconColor: "#000000" },
-  { brand: "azure", pattern: /\b(azure)\b/i, icon: "azure", iconColor: "#0078D4" },
+  {
+    brand: "minimax",
+    pattern: /\b(minimax|abab)\b/i,
+    icon: "minimax",
+    iconColor: "#FF6B6B",
+  },
+  {
+    brand: "doubao",
+    pattern: /\b(doubao|byteplus|volc)\b/i,
+    icon: "doubao",
+    iconColor: "#3B82F6",
+  },
+  {
+    brand: "hunyuan",
+    pattern: /\b(hunyuan)\b/i,
+    icon: "hunyuan",
+    iconColor: "#00A4FF",
+  },
+  {
+    brand: "cohere",
+    pattern: /\b(cohere|command-r)\b/i,
+    icon: "cohere",
+    iconColor: "#39594D",
+  },
+  {
+    brand: "perplexity",
+    pattern: /\b(perplexity|sonar)\b/i,
+    icon: "perplexity",
+    iconColor: "#20808D",
+  },
+  {
+    brand: "ollama",
+    pattern: /\b(ollama)\b/i,
+    icon: "ollama",
+    iconColor: "#000000",
+  },
+  {
+    brand: "openrouter",
+    pattern: /\b(openrouter)\b/i,
+    icon: "openrouter",
+    iconColor: "#6566F1",
+  },
+  {
+    brand: "copilot",
+    pattern: /\b(copilot|github)\b/i,
+    icon: "copilot",
+    iconColor: "#000000",
+  },
+  {
+    brand: "azure",
+    pattern: /\b(azure)\b/i,
+    icon: "azure",
+    iconColor: "#0078D4",
+  },
 ];
 
 export interface ModelBrandIcon {
@@ -47,78 +137,145 @@ export interface ModelBrandIcon {
   modelIds: string[];
 }
 
-function extractVersionScore(modelId: string): number {
-  // Prefer higher major.minor.patch-like numbers in the id.
-  // Examples: grok-4.20 > grok-4.1 > grok-4 > grok-3
-  const matches = [...modelId.matchAll(/(\d+(?:\.\d+){0,3})/g)].map((m) => m[1]);
-  if (matches.length === 0) return -1;
-  let best = -1;
-  for (const raw of matches) {
-    const parts = raw.split(".").map((p) => Number(p));
-    if (parts.some((n) => !Number.isFinite(n))) continue;
-    // Encode up to 4 segments: major*1e9 + minor*1e6 + patch*1e3 + build
-    const score =
-      (parts[0] ?? 0) * 1_000_000_000 +
-      (parts[1] ?? 0) * 1_000_000 +
-      (parts[2] ?? 0) * 1_000 +
-      (parts[3] ?? 0);
-    if (score > best) best = score;
+type ModelVersion = [number, number, number];
+
+function versionFromMatch(match: RegExpMatchArray | null): ModelVersion | null {
+  if (!match) return null;
+  const version = [match[1], match[2], match[3]].map((part) =>
+    part === undefined ? 0 : Number(part),
+  ) as ModelVersion;
+  return version.every(Number.isFinite) ? version : null;
+}
+
+function extractModelVersion(modelId: string): ModelVersion {
+  const id = modelId.toLowerCase();
+  const brandPatterns = [
+    /(?:gpt|chatgpt|gemini|grok)[-_ ]?(\d{1,2})(?!\d)(?:[.-](\d{1,2})(?!\d))?(?:[.-](\d{1,2})(?!\d))?/,
+    /(?:^|[/_-])o(\d{1,2})(?!\d)(?:[.-](\d{1,2})(?!\d))?(?:[.-](\d{1,2})(?!\d))?/,
+    /claude[-_ ](?:opus|sonnet|haiku)[-_ ](\d{1,2})(?!\d)(?:[.-](\d{1,2})(?!\d))?(?:[.-](\d{1,2})(?!\d))?/,
+    /claude[-_ ](\d{1,2})(?!\d)(?:[.-](\d{1,2})(?!\d))?(?:[.-](\d{1,2})(?!\d))?[-_ ](?:opus|sonnet|haiku)/,
+  ];
+  for (const pattern of brandPatterns) {
+    const version = versionFromMatch(id.match(pattern));
+    if (version) return version;
   }
-  return best;
+
+  for (const match of id.matchAll(
+    /(?:^|[^0-9])(\d{1,3})(?:[.-](\d{1,3}))?(?:[.-](\d{1,3}))?/g,
+  )) {
+    const raw = match[0];
+    const major = Number(match[1]);
+    const following = id.slice((match.index ?? 0) + raw.length);
+    if (major > 100 || /^[bkmt](?:\b|[-_])/i.test(following)) continue;
+    const version = versionFromMatch(match);
+    if (version) return version;
+  }
+
+  return [-1, -1, -1];
+}
+
+function compareModelVersion(left: ModelVersion, right: ModelVersion): number {
+  for (let index = 0; index < left.length; index += 1) {
+    const difference = left[index]! - right[index]!;
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+function extractReleaseDate(modelId: string): number {
+  const compact = modelId.match(/(?:^|[^0-9])(20\d{4}(?:\d{2})?)(?:$|[^0-9])/);
+  if (compact) return Number(compact[1]);
+  const separated = modelId.match(
+    /(?:^|[^0-9])(20\d{2})[-_.](\d{2})(?:[-_.](\d{2}))?(?:$|[^0-9])/,
+  );
+  if (!separated) return -1;
+  return Number(`${separated[1]}${separated[2]}${separated[3] ?? "00"}`);
 }
 
 function modelTierScore(modelId: string): number {
   const id = modelId.toLowerCase();
-  if (/\bopus\b/.test(id)) return 40;
-  if (/\bsonnet\b/.test(id)) return 30;
-  if (/\bpro\b/.test(id)) return 25;
-  if (/\bultra\b/.test(id)) return 25;
-  if (/\bmax\b/.test(id)) return 20;
+  if (/\bopus\b/.test(id)) return 60;
+  if (/\bultra\b/.test(id)) return 55;
+  if (/\bpro\b/.test(id)) return 50;
+  if (/\bmax\b/.test(id)) return 45;
+  if (/\bsonnet\b/.test(id)) return 40;
   if (/\bhaiku\b/.test(id)) return 5;
-  return 10;
+  return 30;
 }
 
 function isLikelySecondaryVariant(modelId: string): boolean {
-  // Deprioritize lite/mini/fast/preview/search/tts/image when choosing "top" model.
-  return /(mini|lite|nano|fast|flash|tiny|small|haiku|preview|exp|beta|search|tts|image|vision|embed|moderation|audio|realtime)/i.test(
+  return /(?:^|[-_./])(mini|lite|nano|fast|flash|tiny|small|haiku|search|tts|image|vision|embed|embedding|moderation|audio|realtime)(?:$|[-_./])/i.test(
+    modelId,
+  );
+}
+
+function isPreviewVariant(modelId: string): boolean {
+  return /(?:^|[-_./])(preview|beta|exp|experimental)(?:$|[-_./])/i.test(
     modelId,
   );
 }
 
 /**
  * Choose the "top" model among a brand group.
- * Prefer higher version numbers; among same version, prefer non-lite variants;
- * finally preserve earlier probe order as weak tie-break.
+ * Prefer flagship/general models, then semantic model version and tier.
+ * Dates and context sizes are not treated as model versions.
  */
 export function pickTopModelId(modelIds: string[]): string {
   if (modelIds.length === 0) return "";
   let best = modelIds[0]!;
-  let bestScore = extractVersionScore(best);
+  let bestVersion = extractModelVersion(best);
   let bestTier = modelTierScore(best);
   let bestSecondary = isLikelySecondaryVariant(best);
+  let bestPreview = isPreviewVariant(best);
+  let bestReleaseDate = extractReleaseDate(best);
   for (let i = 1; i < modelIds.length; i += 1) {
     const id = modelIds[i]!;
-    const score = extractVersionScore(id);
+    const version = extractModelVersion(id);
     const tier = modelTierScore(id);
     const secondary = isLikelySecondaryVariant(id);
-    if (score > bestScore) {
-      best = id;
-      bestScore = score;
-      bestTier = tier;
-      bestSecondary = secondary;
+    const preview = isPreviewVariant(id);
+    const releaseDate = extractReleaseDate(id);
+    if (bestSecondary !== secondary) {
+      if (bestSecondary && !secondary) {
+        best = id;
+        bestVersion = version;
+        bestTier = tier;
+        bestSecondary = secondary;
+        bestPreview = preview;
+        bestReleaseDate = releaseDate;
+      }
       continue;
     }
-    if (score < bestScore) continue;
+    const versionComparison = compareModelVersion(version, bestVersion);
+    if (versionComparison > 0) {
+      best = id;
+      bestVersion = version;
+      bestTier = tier;
+      bestSecondary = secondary;
+      bestPreview = preview;
+      bestReleaseDate = releaseDate;
+      continue;
+    }
+    if (versionComparison < 0) continue;
     if (tier > bestTier) {
       best = id;
       bestTier = tier;
       bestSecondary = secondary;
+      bestPreview = preview;
+      bestReleaseDate = releaseDate;
       continue;
     }
     if (tier < bestTier) continue;
-    if (bestSecondary && !secondary) {
+    if (bestPreview !== preview) {
+      if (!bestPreview || preview) continue;
       best = id;
-      bestSecondary = secondary;
+      bestPreview = preview;
+      bestReleaseDate = releaseDate;
+      continue;
+    }
+    if (releaseDate > bestReleaseDate) {
+      best = id;
+      bestReleaseDate = releaseDate;
     }
   }
   return best;
@@ -277,4 +434,3 @@ export function pickBrandDiverseModelIds(
 
   return selected;
 }
-

@@ -12,7 +12,7 @@
 | `src/hooks/useDragSort.ts` | `moveProviderByOffset` |
 | `src/hooks/useProviderActions.ts` | `addProvider` 返回创建结果 |
 | `src/App.tsx` | `scheduleAutoProbeProviders`、新建/导入接线 |
-| `src/utils/modelBrandIcon.ts` | 模型 id → brand 图标（多品牌分组） |
+| `src/utils/modelBrandIcon.ts` | 模型 id → brand 图标；旗舰优先的语义版本/档位/发布日期排序 |
 | `src/utils/applyProviderModel.ts` | 点击 brand LOGO 写入默认模型 |
 | `src/hooks/useDragSort.ts` | `pinProviderToTop` / `moveProviderByOffset` |
 | `src/components/UsageFooter.tsx` | 用量查询小卡（已使用/剩余/USD，气泡外右上角） |
@@ -21,7 +21,7 @@
 
 ## 关键符号
 
-- `pickModelBrandIcons` / `inferModelBrandIcon`
+- `pickModelBrandIcons` / `inferModelBrandIcon` / `pickTopModelId`
 - `ModelsProbeEntry.modelIds`
 - `parseModelsProbeHistory`（兼容旧 v1）
 - `probeProviders(ids, { quiet })`
@@ -60,7 +60,7 @@
 | `tests/components/ProviderList.test.tsx` | 列表/序号既有行为 |
 | `src/lib/api/model-fetch.test.ts` | 后端错误字符串到稳定失败原因分类 |
 | `src/hooks/useFetchCurrentProviderModels.test.ts` | 历史解析 + modelIds |
-| `src/utils/modelBrandIcon.test.ts` | brand 映射 |
+| `src/utils/modelBrandIcon.test.ts` | brand 映射；Claude/GPT/Gemini/Grok 最新旗舰选择回归 |
 
 ## 验证命令
 
