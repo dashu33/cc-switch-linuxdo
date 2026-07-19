@@ -11,6 +11,7 @@ import {
   CircleX,
   CircleMinus,
   Pin,
+  Star,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type {
@@ -126,6 +127,8 @@ interface ProviderCardProps {
   canPinToTop?: boolean;
   /** 快速定位时的短暂高亮 */
   scrollHighlight?: boolean;
+  isFavorite?: boolean;
+  onToggleFavorite?: () => void;
 }
 
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
@@ -245,6 +248,8 @@ export function ProviderCard({
   onPinToTop,
   canPinToTop = false,
   scrollHighlight = false,
+  isFavorite = false,
+  onToggleFavorite,
 }: ProviderCardProps) {
   const { t } = useTranslation();
   const modelLogoPack = useMemo(
@@ -496,6 +501,35 @@ export function ProviderCard({
             : "opacity-0",
         )}
       />
+      {onToggleFavorite && (
+        <button
+          type="button"
+          className={cn(
+            "absolute left-2 top-2 z-30 inline-flex h-7 w-7 items-center justify-center rounded-md bg-card/90 shadow-sm ring-1 ring-border/50 backdrop-blur-sm transition-colors",
+            isFavorite
+              ? "text-amber-500 hover:bg-amber-500/10"
+              : "text-muted-foreground hover:bg-muted hover:text-amber-500",
+          )}
+          title={t(isFavorite ? "provider.unfavorite" : "provider.favorite", {
+            defaultValue: isFavorite ? "取消收藏" : "收藏供应商",
+          })}
+          aria-label={t(
+            isFavorite ? "provider.unfavorite" : "provider.favorite",
+            {
+              defaultValue: isFavorite ? "取消收藏" : "收藏供应商",
+            },
+          )}
+          aria-pressed={isFavorite}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onToggleFavorite();
+          }}
+        >
+          <Star className={cn("h-4 w-4", isFavorite && "fill-current")} />
+        </button>
+      )}
       <div
         className="absolute right-2 top-2 z-30 rounded-full bg-card/90 p-0.5 shadow-sm ring-1 ring-border/50 backdrop-blur-sm"
         role="img"

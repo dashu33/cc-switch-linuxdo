@@ -26,6 +26,7 @@ import {
   ListOrdered,
   CalendarDays,
   Search,
+  Star,
   Trash2,
   X,
 } from "lucide-react";
@@ -86,6 +87,10 @@ import {
   type ProviderSortKey,
 } from "@/utils/providerSort";
 import { inferModelBrand } from "@/utils/modelBrandIcon";
+import {
+  readProviderFavorites,
+  writeProviderFavorites,
+} from "@/utils/providerFavorites";
 
 const providerSortKeyStorage = (appId: AppId) =>
   `cc-switch-provider-sort-key:${appId}`;
@@ -489,6 +494,11 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(
     const [filterPopoverOpen, setFilterPopoverOpen] = useState(false);
     // 快捷筛选：仅显示模型探测成功的供应商（放在排序名称后）
     const [onlyAvailable, setOnlyAvailable] = useState(false);
+    const [onlyFavorites, setOnlyFavorites] = useState(false);
+    const [favoriteProviderIds, setFavoriteProviderIds] = useState<Set<string>>(
+      () => readProviderFavorites(appId),
+    );
+    const favoriteAppIdRef = useRef(appId);
     const [isModelFilterMenuOpen, setIsModelFilterMenuOpen] = useState(false);
     const [modelFilterMenuPos, setModelFilterMenuPos] = useState<{
       top: number;
@@ -522,6 +532,29 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(
       enabled: appId === "claude-desktop",
       refetchInterval: appId === "claude-desktop" ? 5000 : false,
     });
+
+    useEffect(() => {
+      if (favoriteAppIdRef.current === appId) return;
+      favoriteAppIdRef.current = appId;
+      setFavoriteProviderIds(readProviderFavorites(appId));
+      setOnlyFavorites(false);
+    }, [appId]);
+
+    const toggleProviderFavorite = useCallback(
+      (providerId: string) => {
+        setFavoriteProviderIds((current) => {
+          const next = new Set(current);
+          if (next.has(providerId)) {
+            next.delete(providerId);
+          } else {
+            next.add(providerId);
+          }
+          writeProviderFavorites(appId, next);
+          return next;
+        });
+      },
+      [appId],
+    );
 
     // 连通性检查不发真实请求、无封号/计费风险，直接执行（无需确认弹窗）。
     const handleTest = useCallback(
@@ -702,6 +735,10 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(
       const modelKeyword = modelFilter.trim().toLowerCase();
 
       return displayProviders.filter((provider) => {
+        if (onlyFavorites && !favoriteProviderIds.has(provider.id)) {
+          return false;
+        }
+
         if (keyword) {
           const fields = [provider.name, provider.notes, provider.websiteUrl];
           const textMatched = fields.some((field) =>
@@ -746,15 +783,18 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(
     }, [
       displayProviders,
       failureReasonFilter,
+      favoriteProviderIds,
       modelFilter,
       modelsProbeHistoryById,
       onlyAvailable,
+      onlyFavorites,
       probeStatusFilter,
       searchTerm,
     ]);
 
     const hasActiveFilters =
       onlyAvailable ||
+      onlyFavorites ||
       probeStatusFilter !== "all" ||
       modelFilter.trim().length > 0;
 
@@ -1356,6 +1396,8 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(
                   canPinToTop
                   onPinToTop={() => void handlePinProviderToTop(provider.id)}
                   scrollHighlight={scrollHighlightId === provider.id}
+                  isFavorite={favoriteProviderIds.has(provider.id)}
+                  onToggleFavorite={() => toggleProviderFavorite(provider.id)}
                 />
               );
             })}
@@ -1538,6 +1580,34 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(
               {t("provider.onlyAvailable", { defaultValue: "仅显示可用" })}
             </span>
           </label>
+          <label
+            className={cn(
+              "flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 text-xs",
+              onlyFavorites
+                ? "border-amber-500/50 bg-amber-500/10 text-foreground"
+                : "border-border/60 bg-background/70 text-foreground/90",
+            )}
+            title={t("provider.onlyFavoritesHint", {
+              defaultValue: "仅显示已收藏的供应商",
+            })}
+          >
+            <Checkbox
+              checked={onlyFavorites}
+              onCheckedChange={(checked) => setOnlyFavorites(checked === true)}
+              aria-label={t("provider.onlyFavorites", {
+                defaultValue: "仅收藏",
+              })}
+            />
+            <Star
+              className={cn(
+                "h-3.5 w-3.5 text-muted-foreground",
+                onlyFavorites && "fill-amber-500 text-amber-500",
+              )}
+            />
+            <span className="whitespace-nowrap select-none">
+              {t("provider.onlyFavorites", { defaultValue: "仅收藏" })}
+            </span>
+          </label>
           {toolbarActions && (
             <div
               className="ml-auto flex h-9 shrink-0 items-center gap-1 border-l border-border/60 pl-2"
@@ -1553,7 +1623,10 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(
               !toolbarActions && "ml-auto",
             )}
           >
-            <Popover open={filterPopoverOpen} onOpenChange={setFilterPopoverOpen}>
+            <Popover
+              open={filterPopoverOpen}
+              onOpenChange={setFilterPopoverOpen}
+            >
               <PopoverTrigger asChild>
                 <Button
                   type="button"
@@ -1691,6 +1764,7 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(
                     onClick={() => {
                       setProbeStatusFilter("all");
                       setOnlyAvailable(false);
+                      setOnlyFavorites(false);
                       setFailureReasonFilter("all");
                       setModelFilter("");
                     }}
@@ -1927,6 +2001,8 @@ interface SortableProviderCardProps {
   canPinToTop?: boolean;
   onPinToTop?: () => void;
   scrollHighlight?: boolean;
+  isFavorite?: boolean;
+  onToggleFavorite?: () => void;
   isCurrent: boolean;
   appId: AppId;
   isInConfig: boolean;
@@ -2007,6 +2083,8 @@ function SortableProviderCard({
   canPinToTop = false,
   onPinToTop,
   scrollHighlight = false,
+  isFavorite = false,
+  onToggleFavorite,
 }: SortableProviderCardProps) {
   const {
     setNodeRef,
@@ -2085,6 +2163,8 @@ function SortableProviderCard({
         canPinToTop={canPinToTop}
         onPinToTop={onPinToTop}
         scrollHighlight={scrollHighlight}
+        isFavorite={isFavorite}
+        onToggleFavorite={onToggleFavorite}
       />
     </div>
   );
