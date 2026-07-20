@@ -25,7 +25,7 @@
 3. **一条上游镜像线**：`upstream-sync` 保持接近作者 `main`，不写自用功能。
 4. **更新看 Release，不看分支名**：应用只消费 `/releases/latest`；分支只决定“打 tag 时包含哪些提交”。
 5. **personal release 作为 latest**：自用 tag `v*-personal*` 发布时设为 latest，确保 `/releases/latest` 能命中自用包。
-6. **发布时戳版本**：CI 用 tag 回写 `package.json` / `tauri.conf.json` / `Cargo.toml`，避免 `3.17.1` 与 `3.17.1-personal.x` 无法比较。
+6. **发布时戳版本**：CI 用 tag 回写 package.json / 	auri.conf.json / Cargo.toml，以及 latest.json 的 ersion（3.17.2-personal.1 → 应用与 manifest 均为 3.17.2-1），避免 tag 名与包版本不一致导致检查更新失败。
 
 ## 非目标
 

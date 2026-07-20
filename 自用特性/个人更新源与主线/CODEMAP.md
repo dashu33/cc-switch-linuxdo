@@ -45,3 +45,13 @@ rg -n "dashu33/cc-switch-linuxdo|farion1231/cc-switch" src-tauri/tauri.conf.json
 git branch -vv
 git rev-parse --abbrev-ref HEAD
 ```
+
+## latest.json 版本对齐
+
+| 项 | 值 |
+|---|---|
+| tag | 3.17.2-personal.N |
+| 应用 stamp / MSI / latest.json.version | 3.17.2-N |
+| 生成处 | .github/workflows/release-personal-windows.yml → Generate minimal latest.json |
+| 易错 | 若 latest.json.version 仍写 3.17.2-personal.N，Tauri updater 与本机 3.17.2-N 比较会异常 |
+
