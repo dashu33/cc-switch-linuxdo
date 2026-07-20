@@ -71,8 +71,12 @@ import {
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { isTextEditableTarget } from "@/utils/domUtils";
-import { useProviderStats } from "@/lib/query/usage";
-import type { ProviderStats } from "@/types/usage";
+import {
+  RECENT_CALLS_PER_PROVIDER,
+  useProviderStats,
+  useRecentCallsByProvider,
+} from "@/lib/query/usage";
+import type { ProviderStats, RecentCallLite } from "@/types/usage";
 import type { UsageRangeSelection } from "@/types/usage";
 import type {
   ModelsProbeById,
@@ -364,6 +368,27 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(
       },
     );
 
+    // 列表级批量最近调用：一次 invoke 按 providerName 分发，避免 N 路 get_request_logs
+    const recentCallsRange = useMemo<UsageRangeSelection>(
+      () => ({ preset: "1d" }),
+      [],
+    );
+    const {
+      data: recentCallsGroups,
+      isLoading: recentCallsLoading,
+      isFetching: recentCallsFetching,
+    } = useRecentCallsByProvider({
+      appType: appId,
+      range: recentCallsRange,
+      perProvider: RECENT_CALLS_PER_PROVIDER,
+      options: {
+        staleTime: 30_000,
+        gcTime: 10 * 60_000,
+        refetchOnWindowFocus: false,
+        refetchInterval: 60_000,
+      },
+    });
+
     const buildStatsMaps = useCallback((list?: ProviderStats[]) => {
       const byId = new Map<string, ProviderStats>();
       const byName = new Map<string, ProviderStats>();
@@ -387,6 +412,16 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(
       [buildStatsMaps, providerRecentStatsList],
     );
 
+    const recentCallsByName = useMemo(() => {
+      const map = new Map<string, RecentCallLite[]>();
+      for (const group of recentCallsGroups ?? []) {
+        if (group.providerName) {
+          map.set(group.providerName, group.calls ?? []);
+        }
+      }
+      return map;
+    }, [recentCallsGroups]);
+
     const resolveProviderStats = useCallback(
       (provider: Provider): ProviderStats | undefined => {
         return (
@@ -405,6 +440,13 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(
         );
       },
       [providerRecentStatsById],
+    );
+
+    const resolveRecentCalls = useCallback(
+      (provider: Provider): RecentCallLite[] => {
+        return recentCallsByName.get(provider.name) ?? [];
+      },
+      [recentCallsByName],
     );
 
     // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw/Hermes）
@@ -1360,6 +1402,9 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(
                   }
                   proxyUsageStats={resolveProviderStats(provider)}
                   proxyRecentUsageStats={resolveProviderRecentStats(provider)}
+                  recentCalls={resolveRecentCalls(provider)}
+                  recentCallsLoading={recentCallsLoading}
+                  recentCallsFetching={recentCallsFetching}
                   modelsProbeStatus={
                     modelsProbeById[provider.id]?.status ??
                     (modelsProbeProviderId === provider.id
@@ -1983,6 +2028,9 @@ interface SortableProviderCardProps {
   dragDisabled: boolean;
   proxyUsageStats?: ProviderStats;
   proxyRecentUsageStats?: ProviderStats;
+  recentCalls?: RecentCallLite[];
+  recentCallsLoading?: boolean;
+  recentCallsFetching?: boolean;
   modelsProbeStatus?: ModelsProbeStatus;
   modelsProbeHistoryStatus?: ModelsProbeStatus;
   modelsProbeReason?: string;
@@ -2070,6 +2118,9 @@ function SortableProviderCard({
   onSetAsDefault,
   proxyUsageStats,
   proxyRecentUsageStats,
+  recentCalls,
+  recentCallsLoading = false,
+  recentCallsFetching = false,
   modelsProbeStatus = "idle",
   modelsProbeHistoryStatus,
   modelsProbeReason,
@@ -2150,6 +2201,9 @@ function SortableProviderCard({
         onSetAsDefault={onSetAsDefault}
         proxyUsageStats={proxyUsageStats}
         proxyRecentUsageStats={proxyRecentUsageStats}
+        recentCalls={recentCalls}
+        recentCallsLoading={recentCallsLoading}
+        recentCallsFetching={recentCallsFetching}
         modelsProbeStatus={modelsProbeStatus}
         modelsProbeHistoryStatus={modelsProbeHistoryStatus}
         modelsProbeReason={modelsProbeReason}

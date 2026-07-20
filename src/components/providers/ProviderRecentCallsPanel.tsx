@@ -1,17 +1,16 @@
-import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { History } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useRequestLogs } from "@/lib/query/usage";
-import type { AppId } from "@/lib/api";
-import type { UsageRangeSelection } from "@/types/usage";
+import type { RecentCallLite } from "@/types/usage";
 import { getLocaleFromLanguage } from "@/components/usage/format";
 
 interface ProviderRecentCallsPanelProps {
-  appId: AppId;
-  providerName: string;
-  /** 当前供应商更频繁刷新 */
-  isCurrent?: boolean;
+  /** 列表级批量分发的最近调用（无独立 per-card 请求） */
+  calls?: RecentCallLite[];
+  /** 列表级查询是否仍在首屏加载（无缓存） */
+  isLoading?: boolean;
+  /** 后台静默刷新中 */
+  isFetching?: boolean;
   className?: string;
 }
 
@@ -26,11 +25,12 @@ function formatDurationMs(ms: number): string {
  * - 填满父级占位高度（尽量吃满 provider 行高）
  * - z-index 低于操作按钮层
  * - 列：时间 / 模型 / 状态
+ * - 数据由 ProviderList 列表级批量接口分发，卡片不再各自 invoke
  */
 export function ProviderRecentCallsPanel({
-  appId,
-  providerName,
-  isCurrent = false,
+  calls = [],
+  isLoading = false,
+  isFetching = false,
   className,
 }: ProviderRecentCallsPanelProps) {
   const { t, i18n } = useTranslation();
@@ -38,32 +38,8 @@ export function ProviderRecentCallsPanel({
     i18n.resolvedLanguage || i18n.language || "en",
   );
 
-  // 使用稳定 preset（1d），避免 custom 时间戳进 queryKey 导致从设置返回时缓存全 miss
-  const range = useMemo<UsageRangeSelection>(() => ({ preset: "1d" }), []);
-
-  const { data, isLoading, isFetching } = useRequestLogs({
-    filters: {
-      appType: appId,
-      providerName,
-    },
-    range,
-    page: 0,
-    pageSize: 12,
-    options: {
-      enabled: Boolean(providerName),
-      // 30s 内视为新鲜：设置页往返直接复用缓存，不阻塞首屏
-      staleTime: 30_000,
-      // 卸载后保留 10 分钟，覆盖「进设置再回来」
-      gcTime: 10 * 60_000,
-      refetchOnMount: true,
-      refetchOnWindowFocus: false,
-      refetchInterval: isCurrent ? 15_000 : 60_000,
-      refetchIntervalInBackground: false,
-    },
-  });
-
-  const logs = data?.data ?? [];
-  const busy = isLoading || (isFetching && logs.length === 0);
+  const logs = calls;
+  const busy = isLoading && logs.length === 0;
 
   return (
     <div

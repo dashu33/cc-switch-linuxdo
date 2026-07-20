@@ -37,7 +37,7 @@ export function ProviderRecentCallsPopover({
   const [open, setOpen] = useState(false);
   const locale = getLocaleFromLanguage(i18n.resolvedLanguage || i18n.language || "en");
 
-  // 稳定 1d preset，保证与卡片 panel 共用同一 queryKey 缓存
+  // 稳定 1d preset；卡片主路径已改列表批量接口，Popover 仍按需单查
   const range = useMemo<UsageRangeSelection>(() => ({ preset: "1d" }), []);
 
   const { data, isLoading, isFetching } = useRequestLogs({

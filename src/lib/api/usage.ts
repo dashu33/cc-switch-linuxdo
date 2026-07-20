@@ -10,6 +10,7 @@ import type {
   ModelPricing,
   ProviderLimitStatus,
   PaginatedLogs,
+  ProviderRecentCalls,
   SessionSyncResult,
   DataSourceSummary,
 } from "@/types/usage";
@@ -135,6 +136,21 @@ export const usageApi = {
       filters,
       page,
       pageSize,
+    });
+  },
+
+  /** 列表级批量：每个供应商最近 N 条（轻量，无 COUNT/费用回填） */
+  getRecentCallsByProvider: async (
+    appType?: string,
+    startDate?: number,
+    endDate?: number,
+    perProvider: number = 12,
+  ): Promise<ProviderRecentCalls[]> => {
+    return invoke("get_recent_calls_by_provider", {
+      appType,
+      startDate,
+      endDate,
+      perProvider,
     });
   },
 

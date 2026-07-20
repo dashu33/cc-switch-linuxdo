@@ -111,6 +111,23 @@ pub fn get_request_logs(
     state.db.get_request_logs(&filters, page, page_size)
 }
 
+/// 列表级批量拉取每个供应商最近调用（轻量，供卡片行内窗口）
+#[tauri::command]
+pub fn get_recent_calls_by_provider(
+    state: State<'_, AppState>,
+    app_type: Option<String>,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    per_provider: Option<u32>,
+) -> Result<Vec<ProviderRecentCalls>, AppError> {
+    state.db.get_recent_calls_by_provider(
+        app_type.as_deref(),
+        start_date,
+        end_date,
+        per_provider.unwrap_or(12),
+    )
+}
+
 /// 获取单个请求详情
 #[tauri::command]
 pub fn get_request_detail(

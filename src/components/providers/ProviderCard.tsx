@@ -39,7 +39,7 @@ import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge"
 import { CodexProviderQuickAdjust } from "@/components/providers/CodexProviderQuickAdjust";
 import { ProviderProxyUsageSummary } from "@/components/providers/ProviderProxyUsageSummary";
 import { ProviderRecentCallsPanel } from "@/components/providers/ProviderRecentCallsPanel";
-import type { ProviderStats } from "@/types/usage";
+import type { ProviderStats, RecentCallLite } from "@/types/usage";
 import type { ModelsProbeStatus } from "@/hooks/useFetchCurrentProviderModels";
 import { pickModelBrandIcons } from "@/utils/modelBrandIcon";
 import { applyProviderModel } from "@/utils/applyProviderModel";
@@ -102,6 +102,10 @@ interface ProviderCardProps {
   proxyUsageStats?: ProviderStats;
   /** 近 5 分钟本地用量（即时成功率） */
   proxyRecentUsageStats?: ProviderStats;
+  /** 列表级批量最近调用（按 providerName 分发） */
+  recentCalls?: RecentCallLite[];
+  recentCallsLoading?: boolean;
+  recentCallsFetching?: boolean;
   /** 一键拉模型探测结果：成功绿边框 / 失败红边框 */
   modelsProbeStatus?: ModelsProbeStatus;
   /** 最近一次完成的批量探测结果：右侧悬浮状态图标 */
@@ -235,6 +239,9 @@ export function ProviderCard({
   onSetAsDefault,
   proxyUsageStats,
   proxyRecentUsageStats,
+  recentCalls,
+  recentCallsLoading = false,
+  recentCallsFetching = false,
   modelsProbeStatus = "idle",
   modelsProbeHistoryStatus,
   modelsProbeReason,
@@ -1069,9 +1076,9 @@ export function ProviderCard({
 
           <div className="relative min-h-[104px] flex-1 self-stretch">
             <ProviderRecentCallsPanel
-              appId={appId}
-              providerName={provider.name}
-              isCurrent={isCurrent}
+              calls={recentCalls}
+              isLoading={recentCallsLoading}
+              isFetching={recentCallsFetching}
               className="absolute inset-0"
             />
           </div>

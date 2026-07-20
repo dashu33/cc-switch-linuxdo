@@ -56,6 +56,23 @@ export interface PaginatedLogs {
   pageSize: number;
 }
 
+/** 供应商卡片「最近调用」轻量行（列表批量接口） */
+export interface RecentCallLite {
+  requestId: string;
+  model: string;
+  requestModel?: string;
+  latencyMs: number;
+  statusCode: number;
+  errorMessage?: string;
+  createdAt: number;
+}
+
+/** 按展示名分组的最近调用 */
+export interface ProviderRecentCalls {
+  providerName: string;
+  calls: RecentCallLite[];
+}
+
 export interface ModelPricing {
   modelId: string;
   displayName: string;

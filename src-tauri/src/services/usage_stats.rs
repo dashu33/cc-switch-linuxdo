@@ -125,6 +125,28 @@ pub struct PaginatedLogs {
     pub page_size: u32,
 }
 
+/// 供应商卡片「最近调用」轻量行：仅 UI 需要的字段，不做费用回填 / COUNT。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentCallLite {
+    pub request_id: String,
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_model: Option<String>,
+    pub latency_ms: u64,
+    pub status_code: u16,
+    pub error_message: Option<String>,
+    pub created_at: i64,
+}
+
+/// 按展示名分组的最近调用（列表级一次拉取、前端分发）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderRecentCalls {
+    pub provider_name: String,
+    pub calls: Vec<RecentCallLite>,
+}
+
 /// 请求日志详情
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1581,6 +1603,108 @@ impl Database {
             page,
             page_size,
         })
+    }
+
+    /// 列表级批量拉取「每个供应商最近 N 条调用」（轻量，无 COUNT / 无费用回填）。
+    ///
+    /// 用于供应商卡片行内最近调用：一次 SQLite 扫描 + 窗口函数按展示名截断，
+    /// 避免 N 张卡片各自 `get_request_logs` 在单连接上排队卡 UI。
+    pub fn get_recent_calls_by_provider(
+        &self,
+        app_type: Option<&str>,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        per_provider: u32,
+    ) -> Result<Vec<ProviderRecentCalls>, AppError> {
+        let conn = lock_conn!(self.conn);
+
+        let limit = per_provider.clamp(1, 50) as i64;
+        let pname = provider_name_coalesce("l", "p");
+        let mut conditions = vec![effective_usage_log_filter("l")];
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(app) = app_type {
+            conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
+            params.push(Box::new(app.to_string()));
+        }
+        if let Some(start) = start_date {
+            conditions.push("l.created_at >= ?".to_string());
+            params.push(Box::new(start));
+        }
+        if let Some(end) = end_date {
+            conditions.push("l.created_at <= ?".to_string());
+            params.push(Box::new(end));
+        }
+
+        let where_clause = format!("WHERE {}", conditions.join(" AND "));
+        // limit 是最后绑定的参数
+        params.push(Box::new(limit));
+
+        let sql = format!(
+            "WITH ranked AS (
+                SELECT
+                    l.request_id AS request_id,
+                    {pname} AS provider_name,
+                    l.model AS model,
+                    l.request_model AS request_model,
+                    l.latency_ms AS latency_ms,
+                    l.status_code AS status_code,
+                    l.error_message AS error_message,
+                    l.created_at AS created_at,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY {pname}
+                        ORDER BY l.created_at DESC
+                    ) AS rn
+                FROM proxy_request_logs l
+                LEFT JOIN providers p
+                    ON l.provider_id = p.id AND l.app_type = p.app_type
+                {where_clause}
+            )
+            SELECT request_id, provider_name, model, request_model,
+                   latency_ms, status_code, error_message, created_at
+            FROM ranked
+            WHERE rn <= ?
+            ORDER BY provider_name ASC, created_at DESC"
+        );
+
+        let mut stmt = conn.prepare(&sql)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(params_refs.as_slice(), |row| {
+            Ok((
+                row.get::<_, String>(0)?,                   // request_id
+                row.get::<_, String>(1)?,                   // provider_name
+                row.get::<_, String>(2)?,                   // model
+                row.get::<_, Option<String>>(3)?,           // request_model
+                row.get::<_, i64>(4)? as u64,               // latency_ms
+                row.get::<_, i64>(5)? as u16,               // status_code
+                row.get::<_, Option<String>>(6)?,           // error_message
+                row.get::<_, i64>(7)?,                      // created_at
+            ))
+        })?;
+
+        let mut groups: Vec<ProviderRecentCalls> = Vec::new();
+        for row in rows {
+            let (request_id, provider_name, model, request_model, latency_ms, status_code, error_message, created_at) =
+                row?;
+            let call = RecentCallLite {
+                request_id,
+                model,
+                request_model,
+                latency_ms,
+                status_code,
+                error_message,
+                created_at,
+            };
+            match groups.last_mut() {
+                Some(g) if g.provider_name == provider_name => g.calls.push(call),
+                _ => groups.push(ProviderRecentCalls {
+                    provider_name,
+                    calls: vec![call],
+                }),
+            }
+        }
+
+        Ok(groups)
     }
 
     /// 获取单个请求详情
@@ -3588,6 +3712,117 @@ mod tests {
         assert!(request_ids.contains(&"session-model-mismatch"));
         assert!(request_ids.contains(&"session-matches-error-proxy"));
         assert!(request_ids.contains(&"claude-session-cache-creation-mismatch"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_recent_calls_by_provider_groups_and_limits() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let now = 1_700_000_000i64;
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config) VALUES
+                 ('prov-a', 'codex', 'Alpha', '{}'),
+                 ('prov-b', 'codex', 'Beta', '{}')",
+                [],
+            )?;
+
+            // Alpha: 3 条，per_provider=2 时只保留最新 2 条
+            for (i, rid) in ["a-old", "a-mid", "a-new"].iter().enumerate() {
+                insert_usage_log(
+                    &conn,
+                    rid,
+                    "codex",
+                    "prov-a",
+                    "gpt-5",
+                    "proxy",
+                    now + i as i64,
+                    10,
+                    5,
+                    0,
+                    0,
+                    200,
+                    "0.01",
+                )?;
+            }
+            // Beta: 1 条成功 + 1 条失败
+            insert_usage_log(
+                &conn,
+                "b-ok",
+                "codex",
+                "prov-b",
+                "gpt-4",
+                "proxy",
+                now + 10,
+                20,
+                5,
+                0,
+                0,
+                200,
+                "0.02",
+            )?;
+            insert_usage_log(
+                &conn,
+                "b-fail",
+                "codex",
+                "prov-b",
+                "gpt-4",
+                "proxy",
+                now + 11,
+                20,
+                5,
+                0,
+                0,
+                500,
+                "0",
+            )?;
+            // 其它 app 不应出现在 codex 过滤结果中
+            insert_usage_log(
+                &conn,
+                "other-app",
+                "claude",
+                "prov-a",
+                "claude-sonnet",
+                "proxy",
+                now + 20,
+                1,
+                1,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+        }
+
+        let groups = db.get_recent_calls_by_provider(Some("codex"), None, None, 2)?;
+        assert_eq!(groups.len(), 2);
+
+        let alpha = groups
+            .iter()
+            .find(|g| g.provider_name == "Alpha")
+            .expect("Alpha group");
+        assert_eq!(alpha.calls.len(), 2);
+        assert_eq!(alpha.calls[0].request_id, "a-new");
+        assert_eq!(alpha.calls[1].request_id, "a-mid");
+
+        let beta = groups
+            .iter()
+            .find(|g| g.provider_name == "Beta")
+            .expect("Beta group");
+        assert_eq!(beta.calls.len(), 2);
+        assert_eq!(beta.calls[0].request_id, "b-fail");
+        assert_eq!(beta.calls[0].status_code, 500);
+        assert_eq!(beta.calls[1].request_id, "b-ok");
+
+        // 时间窗：只取 now+10 之后 → Beta 两条，Alpha 无
+        let windowed =
+            db.get_recent_calls_by_provider(Some("codex"), Some(now + 10), None, 12)?;
+        assert_eq!(windowed.len(), 1);
+        assert_eq!(windowed[0].provider_name, "Beta");
+        assert_eq!(windowed[0].calls.len(), 2);
 
         Ok(())
     }

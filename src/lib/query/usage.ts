@@ -7,6 +7,9 @@ import type {
   UsageScopeFilters,
 } from "@/types/usage";
 
+/** 供应商卡片行内最近调用：每供应商条数 */
+export const RECENT_CALLS_PER_PROVIDER = 12;
+
 const DEFAULT_REFETCH_INTERVAL_MS = 30000;
 
 type UsageQueryOptions = {
@@ -146,6 +149,19 @@ export const usageKeys = {
       key.statusCode ?? -1,
       page,
       pageSize,
+    ] as const,
+  /** 列表级：按 app 批量最近调用（卡片分发） */
+  recentCallsByProvider: (
+    preset: UsageRangeSelection["preset"],
+    appType: string | undefined,
+    perProvider: number,
+  ) =>
+    [
+      ...usageKeys.all,
+      "recent-calls-by-provider",
+      preset,
+      appType ?? "",
+      perProvider,
     ] as const,
   detail: (requestId: string) =>
     [...usageKeys.all, "detail", requestId] as const,
@@ -345,6 +361,45 @@ export function useRequestLogs({
     refetchOnWindowFocus: options?.refetchOnWindowFocus,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS, // 每30秒自动刷新
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+  });
+}
+
+type RecentCallsByProviderArgs = {
+  appType: string;
+  range?: UsageRangeSelection;
+  perProvider?: number;
+  options?: UsageQueryOptions;
+};
+
+/**
+ * 列表级批量最近调用：一次 invoke，按 providerName 分组。
+ * 供应商卡片应走此路径，避免 N 路 get_request_logs。
+ */
+export function useRecentCallsByProvider({
+  appType,
+  range = { preset: "1d" },
+  perProvider = RECENT_CALLS_PER_PROVIDER,
+  options,
+}: RecentCallsByProviderArgs) {
+  return useQuery({
+    queryKey: usageKeys.recentCallsByProvider(range.preset, appType, perProvider),
+    queryFn: () => {
+      const { startDate, endDate } = resolveUsageRange(range);
+      return usageApi.getRecentCallsByProvider(
+        appType,
+        startDate,
+        endDate,
+        perProvider,
+      );
+    },
+    enabled: (options?.enabled ?? true) && Boolean(appType),
+    staleTime: options?.staleTime ?? 30_000,
+    gcTime: options?.gcTime ?? 10 * 60_000,
+    refetchOnMount: options?.refetchOnMount,
+    refetchOnWindowFocus: options?.refetchOnWindowFocus ?? false,
+    refetchInterval: options?.refetchInterval ?? 60_000,
+    refetchIntervalInBackground:
+      options?.refetchIntervalInBackground ?? false,
   });
 }
 

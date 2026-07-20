@@ -49,9 +49,9 @@
 
 ## 最近调用窗口
 
-- 组件：`ProviderRecentCallsPanel`（行内）
-- 旧 Popover 组件 `ProviderRecentCallsPopover` 仍保留在仓库，但卡片主 UI 不再使用
-- 复用 `useRequestLogs` + `providerName` + `appType`
+- 组件：`ProviderRecentCallsPanel`（行内，纯展示）
+- 数据：`ProviderList` → `useRecentCallsByProvider` → 按 `providerName` 分发
+- 旧 Popover 组件 `ProviderRecentCallsPopover` 仍保留在仓库，但卡片主 UI 不再使用（打开时仍 `useRequestLogs`）
 - 状态码 2xx 绿 / 非 2xx 红；hover 可看 errorMessage / 延迟
 
 ## 平均用时 / 首字
@@ -65,23 +65,25 @@
 
 ## 最近调用缓存
 
-从「设置」返回供应商列表时，行内最近调用曾会整批重拉并卡住 UI。根因与修复：
+从「设置」返回供应商列表时，行内最近调用曾会整批重拉并卡住 UI。根因与修复演进：
 
 | 点 | 说明 |
 |----|------|
-| 根因 | 每卡用 `custom` + `Date.now()` 做时间窗，**queryKey 每秒都变** → 缓存 miss → N 个 provider 并发 `get_request_logs` |
-| 时间窗 | 改为稳定 preset **`1d`**（与「近 24h」同量级，key 稳定可复用） |
-| staleTime | 最近调用 **30s** 内不强制重拉；后台仍按 15s/60s 轮询刷新 |
-| gcTime | 卸载后 **10 分钟** 保留缓存，覆盖设置页往返 |
+| 旧根因 | 每卡用 `custom` + `Date.now()` 做时间窗，**queryKey 每秒都变** → 缓存 miss → N 个 provider 并发 `get_request_logs` |
+| 时间窗 | 稳定 preset **`1d`**（与「近 24h」同量级，key 稳定可复用） |
+| **列表批量（当前）** | `ProviderList` 一次 `get_recent_calls_by_provider`，按 `providerName` 分发；卡片 **不再** 各自 `useRequestLogs` |
+| 后端 lite | 无 `COUNT(*)`、无费用回填；`ROW_NUMBER() OVER (PARTITION BY 展示名)` 截断每供应商 N 条 |
+| staleTime | 批量接口 **30s** 内不强制重拉；后台 60s 轮询 |
+| gcTime | 卸载后 **10 分钟** 保留缓存，覆盖设置页往返 / 同 app 再切回 |
 | 列表 stats | 7d `staleTime=60s`；5m `staleTime=15s`；均 `refetchOnWindowFocus=false` |
-| 首屏 | 有缓存时立刻渲染旧数据，后台静默刷新；仅无缓存时显示「加载中」 |
+| 切 App | 仍按 `appType` 分 key（Grok 缓存不复用 Codex），但仅 **1** 次批量请求，避免 N 路 SQLite 排队 |
 
 ## 热重载
 
 | 改动范围 | 命令 |
 |----------|------|
 | 仅前端 UI / 查询范围 | Vite HMR / `pnpm dev` |
-| `ProviderStats` Rust 字段 | `pnpm tauri dev` |
+| `ProviderStats` / `get_recent_calls_by_provider` Rust | `pnpm tauri dev` |
 
 ## 验证清单
 
@@ -92,6 +94,7 @@
 - [ ] 无请求供应商不显示用量行（最近调用仍可空态）
 - [ ] 与 `UsageFooter` 配额互不干扰
 - [ ] 从设置返回供应商列表时最近调用立刻用缓存展示，不整页卡死
+- [ ] Grok → Codex（或任意 app 切换）不因 N 路最近调用长时间卡住；DevTools/日志仅见 1 次 `get_recent_calls_by_provider`
 
 ## 相关文档
 
