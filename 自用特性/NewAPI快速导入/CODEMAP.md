@@ -142,3 +142,16 @@ cargo test --lib database::dao::universal_providers -- --nocapture
 
 - `recoverSkKeyFromNoise` / `resolveApiKeyCandidate`：拒绝纯中文标签值，清洗 sk 内嵌 CJK
 - 单测：`src/utils/parseNewApiClipboard.test.ts`
+
+
+## Grok Build TOML 点号 profile（易冲突）
+
+| 项 | 说明 |
+|---|---|
+| 共享构建 | `src-tauri/src/grok_config.rs` → `build_provider_config_toml`（统一供应商同步 + deeplink 共用） |
+| 调用点 | `provider.rs` → `to_grokbuild_provider`；`deeplink/provider.rs` → `build_grokbuild_settings` |
+| 问题 | 默认 model `grok-4.5`；`document["model"][profile]` 会被 toml_edit 拆成嵌套路径，序列化 `model = {}`，丢失 base_url/api_key |
+| 正确写法 | `model_root.insert(profile, Item::Table(...))` 再挂到 `document["model"]`；禁止 IndexMut 点号路径 |
+| 对照 | 前端 `src/utils/grokBuildConfig.ts`（smol-toml）会正确写出 `[model."grok-4.5"]` |
+| 验证 | `build_provider_config_toml_keeps_dotted_profile_credentials` + `universal_provider_to_grokbuild_provider_builds_valid_config` |
+

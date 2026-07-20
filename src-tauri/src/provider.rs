@@ -990,25 +990,23 @@ requires_openai_auth = true"#
             .grokbuild
             .as_ref()
             .and_then(|m| m.model.clone())
-            .unwrap_or_else(|| "grok-4.5".to_string());
+            .unwrap_or_else(|| crate::grok_config::DEFAULT_MODEL.to_string());
         let profile = model.clone();
-
-        let mut document = toml_edit::DocumentMut::new();
-        document["models"]["default"] = toml_edit::value(profile.as_str());
-        let mut model_table = toml_edit::Table::new();
-        model_table["model"] = toml_edit::value(model.as_str());
         let base_url = self.openai_compatible_base_url();
-        model_table["base_url"] = toml_edit::value(base_url.as_str());
-        model_table["name"] = toml_edit::value(self.name.as_str());
-        model_table["api_key"] = toml_edit::value(self.api_key.as_str());
-        model_table["api_backend"] = toml_edit::value("responses");
-        model_table["context_window"] = toml_edit::value(500_000i64);
-        document["model"][profile.as_str()] = toml_edit::Item::Table(model_table);
+        // Shared builder: dotted profiles like "grok-4.5" must not use
+        // toml_edit IndexMut path syntax (would serialize model = {}).
+        let config = crate::grok_config::build_provider_config_toml(
+            &profile,
+            &model,
+            &base_url,
+            &self.name,
+            &self.api_key,
+        );
 
         Some(Provider {
             id: format!("universal-grokbuild-{}", self.id),
             name: self.name.clone(),
-            settings_config: serde_json::json!({ "config": document.to_string() }),
+            settings_config: serde_json::json!({ "config": config }),
             website_url: self.website_url.clone(),
             category: Some("aggregator".to_string()),
             created_at: self.created_at,
@@ -1717,6 +1715,30 @@ mod tests {
             .expect("grokbuild config text");
         crate::grok_config::validate_config_toml(config).expect("valid Grok Build TOML");
         assert_eq!(provider.id, "universal-grokbuild-newapi");
+
+        // Regression: dotted profile names must not empty the [model] table.
+        let document: toml::Value = config.parse().expect("parse grok toml");
+        let selected = document
+            .get("model")
+            .and_then(|m| m.get("grok-4.5"))
+            .and_then(|v| v.as_table())
+            .expect("model.\"grok-4.5\" table");
+        assert_eq!(
+            selected.get("base_url").and_then(|v| v.as_str()),
+            Some("https://gateway.example/v1")
+        );
+        assert_eq!(
+            selected.get("api_key").and_then(|v| v.as_str()),
+            Some("sk-test")
+        );
+        assert_eq!(
+            selected.get("api_backend").and_then(|v| v.as_str()),
+            Some("responses")
+        );
+        assert!(
+            config.contains("[model.\"grok-4.5\"]") || config.contains("[model.'grok-4.5']"),
+            "expected quoted dotted profile header, got:\n{config}"
+        );
     }
 
     #[test]

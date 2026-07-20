@@ -210,3 +210,49 @@ sk-5d80删7485003掉463577653d中9122445fc162fb7文b8c35928d966
 - 标签行若是纯中文说明（如 `key：删掉中文！！！`）→ **忽略**，继续扫后面真正的 key
 - `sk-` 中间夹中文/全角标点 → 自动剔除后拼接
 - 标签后同一行就是带噪声的 sk key → 同样清洗
+
+
+## 缺陷修复：Grok Build 同步后 KEY/BASEURL 为空（2026-07-20）
+
+### 现象
+
+一键/快速导入 NewAPI 后，同步到 **Grok Build** 的子供应商卡片上 **API Key** 或 **Base URL** 为空（其它端如 Codex/Claude 正常）。
+
+### 根因
+
+`UniversalProvider::to_grokbuild_provider` 默认模型为 `grok-4.5`。写入 TOML 时使用：
+
+```rust
+document["model"][profile] = Item::Table(...);
+```
+
+`toml_edit` 的 `IndexMut` 会把带点的 key 当成**嵌套路径**（`model` → `grok-4` → `5`），结果序列化成：
+
+```toml
+models = { default = "grok-4.5" }
+model = {}
+```
+
+前端 `parseGrokBuildConfig` / 后端 `extract_model_config` 按 `[model."grok-4.5"]` 查找，读不到 `base_url` / `api_key`，表现为「漏掉 KEY 或 BASEURL」。
+
+凭证本身在统一供应商记录里是完整的；问题只在 **Grok 子供应商 TOML 序列化**。
+
+### 修复
+
+抽取 `grok_config::build_provider_config_toml`，用 `Table::insert(profile, ...)` 把 profile 作为**单一键**插入（统一供应商同步与 deeplink 共用），生成：
+
+```toml
+[models]
+default = "grok-4.5"
+
+[model."grok-4.5"]
+base_url = "..."
+api_key = "..."
+...
+```
+
+### 回归
+
+- 重新快速导入 → 打开 Grok Build 供应商编辑/卡片，确认 Base URL 与 API Key 非空
+- 或对已有统一供应商点「同步」后检查 Grok 子供应商
+

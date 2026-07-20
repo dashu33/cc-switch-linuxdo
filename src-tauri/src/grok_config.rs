@@ -200,6 +200,50 @@ pub fn extract_base_url(config_toml: &str) -> Option<String> {
     Some(extract_model_config(config_toml)?.base_url)
 }
 
+/// Build a provider-owned Grok Build `config.toml` document.
+///
+/// Profile names may contain dots (default `grok-4.5`). Never write the profile
+/// via `document["model"][profile]` — `toml_edit` `IndexMut` treats dots as
+/// nested path segments and serializes an empty `model = {}`, dropping
+/// `base_url` / `api_key`. Always insert the profile as a single table key.
+pub fn build_provider_config_toml(
+    profile: &str,
+    model: &str,
+    base_url: &str,
+    name: &str,
+    api_key: &str,
+) -> String {
+    let profile = profile.trim();
+    let model = model.trim();
+    let profile = if profile.is_empty() {
+        DEFAULT_MODEL
+    } else {
+        profile
+    };
+    let model = if model.is_empty() { profile } else { model };
+
+    let mut document = toml_edit::DocumentMut::new();
+    document["models"]["default"] = toml_edit::value(profile);
+
+    let mut model_table = toml_edit::Table::new();
+    model_table["model"] = toml_edit::value(model);
+    model_table["base_url"] = toml_edit::value(base_url.trim());
+    model_table["name"] = toml_edit::value(name.trim());
+    let api_key = api_key.trim();
+    if !api_key.is_empty() {
+        model_table["api_key"] = toml_edit::value(api_key);
+    }
+    model_table["api_backend"] = toml_edit::value(DEFAULT_API_BACKEND);
+    model_table["context_window"] = toml_edit::value(DEFAULT_CONTEXT_WINDOW);
+
+    // `Table::insert` treats the key as one component (quotes dotted names).
+    // Do not use IndexMut path syntax for the profile.
+    let mut model_root = toml_edit::Table::new();
+    model_root.insert(profile, toml_edit::Item::Table(model_table));
+    document["model"] = toml_edit::Item::Table(model_root);
+    document.to_string()
+}
+
 fn update_selected_model_string(
     config_toml: &str,
     field: &str,
@@ -398,6 +442,39 @@ context_window = 500000
     fn validates_expected_config_shape() {
         validate_config_toml(valid_config()).expect("valid Grok Build config");
         validate_config_toml(valid_env_key_config()).expect("valid env_key configuration");
+    }
+
+    #[test]
+    fn build_provider_config_toml_keeps_dotted_profile_credentials() {
+        let config = build_provider_config_toml(
+            "grok-4.5",
+            "grok-4.5",
+            "https://gateway.example/v1",
+            "NewAPI",
+            "sk-test",
+        );
+        validate_config_toml(&config).expect("valid generated config");
+        let selected = extract_model_config(&config).expect("selected model");
+        assert_eq!(selected.profile, "grok-4.5");
+        assert_eq!(selected.base_url, "https://gateway.example/v1");
+        assert_eq!(selected.api_key.as_deref(), Some("sk-test"));
+        assert_eq!(selected.api_backend, DEFAULT_API_BACKEND);
+        assert!(
+            config.contains("[model.\"grok-4.5\"]") || config.contains("[model.'grok-4.5']"),
+            "expected quoted dotted profile header, got:\n{config}"
+        );
+
+        // IndexMut path form is the historical bug: empty model table.
+        let mut broken = toml_edit::DocumentMut::new();
+        broken["models"]["default"] = toml_edit::value("grok-4.5");
+        let mut model_table = toml_edit::Table::new();
+        model_table["base_url"] = toml_edit::value("https://gateway.example/v1");
+        model_table["api_key"] = toml_edit::value("sk-test");
+        broken["model"]["grok-4.5"] = toml_edit::Item::Table(model_table);
+        assert!(
+            !broken.to_string().contains("base_url"),
+            "IndexMut dotted path should drop credentials"
+        );
     }
 
     #[test]
