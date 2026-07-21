@@ -60,7 +60,7 @@
    - 相关改动已按特性拆分提交。
    - 推送到 GitHub 自用分支仓库（当前常见：`origin` = `dashu33/cc-switch-linuxdo`，自用主线 `main`，上游镜像 `upstream-sync`，临时开发分支可用 `codex/*`）。
 2. **远端编译 + 发布资产**
-   - 打自用 tag：`v*-personal*`（例：`v3.17.1-personal.7`）。
+   - 打自用 tag：`v*-personal*`（推荐日期方案 A：`v3.17.2-personal.20260721` → 应用内版本 `3.17.2-20260721`；旧序号 `v3.17.2-personal.7` → `3.17.2-7` 仍兼容）。
    - 触发并等待：
      - `Personal Windows Release`（Windows x64）
      - `Personal macOS Release (unsigned)`（macOS **无签名 / ad-hoc**）
@@ -79,6 +79,39 @@
    - 回传：分支、tag、Release URL、本机替换结果。
    - 若行为/文档变化，同一任务内更新对应 `自用特性/` 文档。
 
+### 版本号约束（强制 · 方案 A 日期）
+
+自用 personal 包的**应用内版本**（`package.json` / `tauri.conf.json` / `Cargo.toml` / `latest.json`）必须带日期或兼容序号后缀，**禁止**把裸 `X.Y.Z` 当作 personal 安装版/检查更新源的长期版本。
+
+| 项 | 约定 |
+|---|---|
+| Git tag | `vX.Y.Z-personal.YYYYMMDD`（例：`v3.17.2-personal.20260721`） |
+| 应用内 / latest.json | `X.Y.Z-YYYYMMDD`（例：`3.17.2-20260721`） |
+| 兼容旧 tag | `vX.Y.Z-personal.N` → `X.Y.Z-N` |
+| 仓库 `main` 上默认裸版本 | 可保留上游式 `3.17.2` 供开发；**出包时由 CI stamp 改成带日期**，勿把裸版本当已发布 personal 包 |
+
+**为什么必须这样（SemVer）：**
+
+- `3.17.2-20260721` 在 SemVer 里是 **pre-release（预发布）**，不是正式版。
+- 规则是：**同一主版本下，不带后缀的正式版 > 任何带后缀的预发布版**。
+- 因此比较结果是：
+
+```text
+3.17.2          >  3.17.2-20260721     ← 裸正式版“更新”
+3.17.2-20260720 <  3.17.2-20260721     ← 日期递增正常
+3.17.2-7        <  3.17.2-20260721     ← 旧序号 < 日期（按字符串/数值 pre-release 比较）
+```
+
+**会踩的坑：**
+
+1. 本机若安装的是裸 `3.17.2`，远端 latest 是 `3.17.2-20260721`，检查更新会认为**已是更新或没有更新**（不会提示去装日期包）。
+2. 本机开发/本机替换若 stamp 成裸 `3.17.2`，之后想用检查更新装 `3.17.2-日期`，同样可能被判定为“更旧”而跳过。
+3. 正确路径：personal 发布与本机替换产物始终是 `X.Y.Z-YYYYMMDD`；从旧 personal 序号升到日期版可以；**不要**从裸正式版指望“升级”到同号日期预发布。
+
+**本机替换时的 stamp：**
+
+- 发布闭环若在本机构建 exe，应用版本应与本次 personal tag 对齐（同一 `X.Y.Z-YYYYMMDD`），不要用未 stamp 的裸 `package.json` 版本直接当发布产物。
+
 ### 发布范围默认值
 
 | 目标 | 默认 |
@@ -91,7 +124,8 @@
 ### 发布完成判定
 
 - [ ] 分支已 push 到 GitHub
-- [ ] personal tag 已 push
+- [ ] personal tag 已 push（推荐 `vX.Y.Z-personal.YYYYMMDD`）
+- [ ] 应用 / latest.json 版本为 `X.Y.Z-YYYYMMDD`（或兼容 `X.Y.Z-N`），**不是**裸 `X.Y.Z`
 - [ ] Personal Windows 成功，资产已挂到 Release
 - [ ] Personal macOS unsigned 成功，资产已挂到 Release
 - [ ] 全量 `Release` 未运行或已取消
@@ -103,6 +137,7 @@
 - 「发布」不等于只 push 代码、不等于只跑 CI、不等于只打 tag。
 - 开发调试可用 `pnpm dev` / `pnpm dev:renderer`；**不叫发布**。
 - 未要求时不要触发需要 Apple 证书/公证的正式 mac 签名流程。
+- 不要把裸 `X.Y.Z` 当 personal 已发布版本长期使用（见上方「版本号约束」）。
 
 ## 完成前检查
 

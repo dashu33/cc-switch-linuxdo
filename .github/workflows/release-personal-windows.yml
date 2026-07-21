@@ -1,7 +1,9 @@
 name: Personal Windows Release
 
 # Self-use Windows-only build+publish for personal tags.
-# Trigger: push tags matching v*-personal* (e.g. v3.17.2-personal.1)
+# Trigger: push tags matching v*-personal*
+# Preferred (scheme A date): v3.17.2-personal.20260721  -> app version 3.17.2-20260721
+# Legacy numeric:            v3.17.2-personal.7         -> app version 3.17.2-7
 # Avoids macOS/Apple signing requirements of the full multi-platform release.yml.
 
 on:
@@ -103,10 +105,20 @@ jobs:
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
           VERSION_TAG="${TAG#v}"
-          # WiX/MSI only accepts numeric prerelease segments (max 65535).
-          # Map 3.17.1-personal.10 -> 3.17.1-10 for package/Cargo/tauri version.
-          # Release asset names still use the original git tag.
-          if [[ "$VERSION_TAG" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-personal\.([0-9]+)$ ]]; then
+          # App / updater version (scheme A): 3.17.2-20260721
+          # Tag keeps "personal" so only personal workflows fire (not full release.yml):
+          #   v3.17.2-personal.20260721  ->  3.17.2-20260721
+          # Legacy numeric builds still work:
+          #   v3.17.2-personal.7         ->  3.17.2-7
+          # Direct date tags also accepted:
+          #   v3.17.2-20260721           ->  3.17.2-20260721
+          # WiX rejects non-numeric prerelease labels (e.g. "personal"); date/number only.
+          # Release asset file names still use the original git tag.
+          if [[ "$VERSION_TAG" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-personal\.([0-9]{8})$ ]]; then
+            VERSION="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
+          elif [[ "$VERSION_TAG" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-personal\.([0-9]+)$ ]]; then
+            VERSION="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
+          elif [[ "$VERSION_TAG" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-([0-9]{8})$ ]]; then
             VERSION="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
           else
             VERSION="$VERSION_TAG"
@@ -273,10 +285,16 @@ jobs:
             sig_content=$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/octet-stream" "$msi_sig" || true)
           fi
           pub_date=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          # Must match "Stamp personal version from tag":
-          # v3.17.2-personal.1 -> 3.17.2-1 (app binary / MSI version)
+          # Must match "Stamp personal version from tag" (scheme A date preferred):
+          # v3.17.2-personal.20260721 -> 3.17.2-20260721
+          # v3.17.2-personal.7         -> 3.17.2-7
+          # v3.17.2-20260721           -> 3.17.2-20260721
           version_tag="${TAG#v}"
-          if [[ "$version_tag" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-personal\.([0-9]+)$ ]]; then
+          if [[ "$version_tag" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-personal\.([0-9]{8})$ ]]; then
+            version="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
+          elif [[ "$version_tag" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-personal\.([0-9]+)$ ]]; then
+            version="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
+          elif [[ "$version_tag" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-([0-9]{8})$ ]]; then
             version="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"
           else
             version="$version_tag"
