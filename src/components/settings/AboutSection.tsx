@@ -40,6 +40,7 @@ import type { AppId } from "@/lib/api/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isWindows } from "@/lib/platform";
 import { isUpdateAvailable } from "@/lib/version";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ToolUpgradeConfirmDialog } from "./ToolUpgradeConfirmDialog";
 import { ToolInstallRow } from "./ToolInstallRow";
 
@@ -222,6 +223,8 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     () => appVersionCache === null,
   );
   const [isDownloading, setIsDownloading] = useState(false);
+  /** 检查到新版本后，先询问用户是否下载并替换应用 */
+  const [showUpdateConfirm, setShowUpdateConfirm] = useState(false);
   const [toolVersions, setToolVersions] = useState<ToolVersion[]>(
     () => toolVersionsCache?.data ?? [],
   );
@@ -451,41 +454,64 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
     }
   }, [t, updateInfo?.availableVersion, version]);
 
-  const handleCheckUpdate = useCallback(async () => {
-    if (hasUpdate) {
-      if (isPortable) {
-        try {
-          await settingsApi.checkUpdates();
-        } catch (error) {
-          console.error("[AboutSection] Portable update failed", error);
-        }
-        return;
-      }
+  /** 用户确认后：下载更新包并替换当前安装（安装版）；便携版仅打开下载页。 */
+  const performInstallUpdate = useCallback(async () => {
+    setShowUpdateConfirm(false);
 
-      setIsDownloading(true);
+    if (isPortable) {
       try {
-        resetDismiss();
-        const installed = await settingsApi.installUpdateAndRestart();
-        if (!installed) {
-          toast.success(t("settings.upToDate"), { closeButton: true });
-        }
+        await settingsApi.checkUpdates();
+        toast.message(t("settings.portableMode"), { closeButton: true });
       } catch (error) {
-        console.error("[AboutSection] Update failed", error);
+        console.error("[AboutSection] Portable update failed", error);
         toast.error(t("settings.updateFailed"), {
           description: extractErrorMessage(error) || undefined,
           closeButton: true,
         });
-        try {
-          await settingsApi.checkUpdates();
-        } catch (fallbackError) {
-          console.error(
-            "[AboutSection] Failed to open fallback updater",
-            fallbackError,
-          );
-        }
-      } finally {
-        setIsDownloading(false);
       }
+      return;
+    }
+
+    setIsDownloading(true);
+    try {
+      resetDismiss();
+      const installed = await settingsApi.installUpdateAndRestart();
+      if (!installed) {
+        toast.success(t("settings.upToDate"), { closeButton: true });
+      }
+      // installed === true：后端会安装并重启进程，通常不会回到这里。
+    } catch (error) {
+      console.error("[AboutSection] Update failed", error);
+      toast.error(t("settings.updateFailed"), {
+        description: extractErrorMessage(error) || undefined,
+        closeButton: true,
+      });
+      try {
+        await settingsApi.checkUpdates();
+      } catch (fallbackError) {
+        console.error(
+          "[AboutSection] Failed to open fallback updater",
+          fallbackError,
+        );
+      }
+    } finally {
+      setIsDownloading(false);
+    }
+  }, [isPortable, resetDismiss, t]);
+
+  /**
+   * 检查更新流程：
+   * 1. 拉取 latest 判断是否有新版本
+   * 2. 有更新 → 弹窗询问是否下载并替换
+   * 3. 用户点「是」→ performInstallUpdate
+   *
+   * 若 UI 已处于「有更新」状态（启动时后台检查过），再次点击仍先确认再装，避免误触立刻替换。
+   */
+  const handleCheckUpdate = useCallback(async () => {
+    if (isDownloading) return;
+
+    if (hasUpdate) {
+      setShowUpdateConfirm(true);
       return;
     }
 
@@ -493,12 +519,14 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       const available = await checkUpdate();
       if (!available) {
         toast.success(t("settings.upToDate"), { closeButton: true });
+        return;
       }
+      setShowUpdateConfirm(true);
     } catch (error) {
       console.error("[AboutSection] Check update failed", error);
       toast.error(t("settings.checkUpdateFailed"));
     }
-  }, [checkUpdate, hasUpdate, isPortable, resetDismiss, t]);
+  }, [checkUpdate, hasUpdate, isDownloading, t]);
 
   const handleCopyInstallCommands = useCallback(async () => {
     try {
@@ -1266,6 +1294,31 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         displayName={toolDisplayName}
         onConfirm={handleConfirmUpgrade}
         onCancel={handleCancelUpgrade}
+      />
+
+      <ConfirmDialog
+        isOpen={showUpdateConfirm}
+        title={t("settings.updateConfirmTitle")}
+        message={
+          isPortable
+            ? t("settings.updateConfirmPortableMessage", {
+                version: updateInfo?.availableVersion ?? "",
+              })
+            : t("settings.updateConfirmMessage", {
+                version: updateInfo?.availableVersion ?? "",
+              })
+        }
+        confirmText={
+          isPortable
+            ? t("settings.updateConfirmOpenDownload")
+            : t("settings.updateConfirmYes")
+        }
+        cancelText={t("settings.updateConfirmNo")}
+        variant="info"
+        onConfirm={() => {
+          void performInstallUpdate();
+        }}
+        onCancel={() => setShowUpdateConfirm(false)}
       />
     </motion.section>
   );
