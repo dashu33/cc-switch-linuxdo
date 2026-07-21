@@ -57,7 +57,7 @@
 
 1. personal tag push → personal workflow 构建并上传资产 + `latest.json`
 2. GitHub 将该 personal release 标为 latest，供下次检查更新命中
-3. `latest.json` platforms.`windows-x86_64` 指向 MSI + signature
+3. `latest.json` platforms.`windows-x86_64` 指向 **NSIS Setup.exe** + signature（日期方案 A；旧序号时代曾用 MSI）
 
 ## 易冲突点
 
@@ -71,7 +71,8 @@
   - `3.17.2`（正式） **>** `3.17.2-20260721`（预发布）
   - personal 已发布版本禁止裸 `X.Y.Z`；必须 `X.Y.Z-YYYYMMDD` 或兼容 `X.Y.Z-N`
   - 本机若是裸版，检查更新不会提示安装同号日期包
-- MSI ProductVersion 通常只吃核心 `X.Y.Z`；日期进 app/`latest.json` 即可，勿把 `personal` 字符串写进 stamp
+- MSI 的 prerelease 段必须 ≤65535：`20260721` 会直接让 `tauri build`（含 msi target）失败；personal Windows 必须 `--bundles nsis`
+- 勿把 `personal` 字符串写进 app stamp（WiX 也不接受非数字标签）
 
 ## 验证命令
 
@@ -94,10 +95,11 @@ git rev-parse --abbrev-ref HEAD
 | 项 | 值 |
 |---|---|
 | 推荐 tag | `v3.17.2-personal.20260721` |
-| 应用 stamp / MSI 文件内版本 / latest.json.version | `3.17.2-20260721` |
+| 应用 stamp / latest.json.version | `3.17.2-20260721` |
+| Windows 安装器 | NSIS `*-Windows-Setup.exe`（**不用 MSI**，因日期 >65535） |
 | 兼容旧 tag | `v3.17.2-personal.7` → `3.17.2-7` |
 | 生成处 | `.github/workflows/release-personal-windows.yml` / `release-personal-macos.yml` → Stamp + Generate latest.json |
 | 为何 tag 仍带 personal | 触发 `v*-personal*` 工作流，避免全量 `release.yml`（`v*`） |
-| 为何 app 去掉 personal | WiX 拒绝非数字 prerelease 标签；日期数字可进版本字符串 |
-| 易错 | latest.json.version 若仍写 `3.17.2-personal.20260721`，与本机 stamp `3.17.2-20260721` 比较会异常 |
+| 为何 app 去掉 personal | 标签字符串非数字；日期数字可进版本字符串 |
+| 易错 | latest.json.version 若仍写 `3.17.2-personal.20260721`，与本机 stamp `3.17.2-20260721` 比较会异常；或仍对日期版跑 MSI |
 | 同一天多包 | 当前方案 A 一天一个日期；若同日再发需改方案 B（`.1`/`.2`）或等次日 |

@@ -88,6 +88,7 @@
 | Git tag | `vX.Y.Z-personal.YYYYMMDD`（例：`v3.17.2-personal.20260721`） |
 | 应用内 / latest.json | `X.Y.Z-YYYYMMDD`（例：`3.17.2-20260721`） |
 | 兼容旧 tag | `vX.Y.Z-personal.N` → `X.Y.Z-N` |
+| Windows 安装器 | **NSIS only**（`*-Windows-Setup.exe`）；日期 prerelease `YYYYMMDD` > MSI 上限 65535，**禁止**对日期版跑 MSI |
 | 仓库 `main` 上默认裸版本 | 可保留上游式 `3.17.2` 供开发；**出包时由 CI stamp 改成带日期**，勿把裸版本当已发布 personal 包 |
 
 **为什么必须这样（SemVer）：**

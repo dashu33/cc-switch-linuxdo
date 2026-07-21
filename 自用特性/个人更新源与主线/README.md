@@ -41,7 +41,8 @@
 6. **发布时戳版本（方案 A 日期）**：CI 用 tag 回写 package.json / tauri.conf.json / Cargo.toml，以及 latest.json 的 version：
    - 推荐：`v3.17.2-personal.20260721` → 应用与 manifest 均为 `3.17.2-20260721`
    - 兼容旧序号：`v3.17.2-personal.7` → `3.17.2-7`
-   - tag 保留 `personal` 字样，避免误触全量 `release.yml`（匹配 `v*`）；应用内版本去掉 `personal`，只留数字日期，避免 WiX 拒绝非数字 prerelease。
+   - tag 保留 `personal` 字样，避免误触全量 `release.yml`（匹配 `v*`）；应用内版本去掉 `personal`，只留数字日期。
+   - **Windows 安装器**：日期 prerelease `20260721` > WiX/MSI 上限 `65535`，personal Windows 只打 **NSIS**（`*-Windows-Setup.exe`）+ 绿色 zip，**不打 MSI**；`latest.json` 指向 NSIS。
 7. **禁止裸版本当 personal 发布版（SemVer）**：`3.17.2-20260721` 是 pre-release，**小于** 正式版 `3.17.2`。personal 安装包 / 本机替换 / `latest.json` 必须始终是 `X.Y.Z-YYYYMMDD`（或旧 `X.Y.Z-N`），不要用裸 `X.Y.Z` 作为已发布 personal 版本，否则本机停在裸版后，检查更新不会把同号日期包当成“更新”。完整条文见根目录 `AGENTS.md` →「版本号约束」。
 8. **先确认再装**：检查到更新后必须用户确认，再走下载+替换；避免误触立刻安装。
 9. **安装版 vs 便携版**：自动替换依赖 Tauri updater + MSI/NSIS 安装器；便携 zip 只打开下载页。

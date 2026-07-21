@@ -147,10 +147,12 @@ jobs:
 
 
 
-      - name: Build Tauri App (Windows x64)
+      # Scheme A date prerelease (e.g. 3.17.2-20260721) exceeds WiX/MSI's 65535 limit.
+      # Personal Windows therefore bundles NSIS + portable only (skip MSI).
+      - name: Build Tauri App (Windows x64, NSIS)
 
         shell: pwsh
-        run: pnpm tauri build
+        run: pnpm tauri build --bundles nsis
 
       - name: Prepare Windows Assets
         shell: pwsh
@@ -160,31 +162,19 @@ jobs:
           $VERSION = $env:GITHUB_REF_NAME
           $targetRoot = 'src-tauri/target/release'
 
-          $msi = Get-ChildItem -Path (Join-Path $targetRoot 'bundle/msi') -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($null -eq $msi) {
-            Write-Warning 'No Windows MSI installer found (will still publish portable/NSIS if present)'
-          } else {
-            $dest = "CC-Switch-$VERSION-Windows.msi"
-            Copy-Item $msi.FullName (Join-Path release-assets $dest)
-            Write-Host "Installer copied: $dest"
-            $sigPath = "$($msi.FullName).sig"
-            if (Test-Path $sigPath) {
-              Copy-Item $sigPath (Join-Path release-assets ("$dest.sig"))
-              Write-Host "Signature copied: $dest.sig"
-            } else {
-              Write-Warning "Signature not found for $($msi.Name)"
-            }
-          }
-
           $nsis = Get-ChildItem -Path (Join-Path $targetRoot 'bundle/nsis') -Recurse -Include *.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($null -ne $nsis) {
-            $nsisDest = "CC-Switch-$VERSION-Windows-Setup.exe"
-            Copy-Item $nsis.FullName (Join-Path release-assets $nsisDest)
-            Write-Host "NSIS installer copied: $nsisDest"
-            $nsisSig = "$($nsis.FullName).sig"
-            if (Test-Path $nsisSig) {
-              Copy-Item $nsisSig (Join-Path release-assets ("$nsisDest.sig"))
-            }
+          if ($null -eq $nsis) {
+            throw 'No Windows NSIS installer found (required for personal date-version releases)'
+          }
+          $nsisDest = "CC-Switch-$VERSION-Windows-Setup.exe"
+          Copy-Item $nsis.FullName (Join-Path release-assets $nsisDest)
+          Write-Host "NSIS installer copied: $nsisDest"
+          $nsisSig = "$($nsis.FullName).sig"
+          if (Test-Path $nsisSig) {
+            Copy-Item $nsisSig (Join-Path release-assets ("$nsisDest.sig"))
+            Write-Host "Signature copied: $nsisDest.sig"
+          } else {
+            Write-Warning "Signature not found for $($nsis.Name)"
           }
 
           $exe = Get-ChildItem -Path $targetRoot -Filter 'cc-switch.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -250,8 +240,9 @@ jobs:
             基于自用主线 `main` 的个人增强包（Windows x64）。
 
             ### 下载
-            - **Windows 安装包**: `CC-Switch-${{ github.ref_name }}-Windows.msi`
+            - **Windows 安装包 (NSIS)**: `CC-Switch-${{ github.ref_name }}-Windows-Setup.exe`
             - **绿色版**: `CC-Switch-${{ github.ref_name }}-Windows-Portable.zip`
+            - 说明：日期版本 prerelease（如 `3.17.2-20260721`）超过 WiX/MSI 65535 限制，personal 包改用 NSIS。
 
             ### 更新摘要
             - NewAPI 剪贴板快速导入（URL+Key / Base64 / 半量等待）
@@ -278,11 +269,23 @@ jobs:
           set -euo pipefail
           API="https://api.github.com/repos/${REPO}/releases/tags/${TAG}"
           assets_json=$(gh api "$API" --jq '.assets')
+          # Prefer NSIS Setup (date scheme A); fall back to MSI for legacy numeric tags.
+          setup_url=$(echo "$assets_json" | jq -r '.[] | select(.name | test("Windows-Setup\\.exe$")) | .browser_download_url' | head -1)
+          setup_sig=$(echo "$assets_json" | jq -r '.[] | select(.name | test("Windows-Setup\\.exe\\.sig$")) | .browser_download_url' | head -1)
           msi_url=$(echo "$assets_json" | jq -r '.[] | select(.name | test("Windows\\.msi$")) | .browser_download_url' | head -1)
           msi_sig=$(echo "$assets_json" | jq -r '.[] | select(.name | test("Windows\\.msi\\.sig$")) | .browser_download_url' | head -1)
+          asset_url=""
+          sig_url=""
+          if [ -n "$setup_url" ] && [ "$setup_url" != "null" ]; then
+            asset_url="$setup_url"
+            sig_url="$setup_sig"
+          elif [ -n "$msi_url" ] && [ "$msi_url" != "null" ]; then
+            asset_url="$msi_url"
+            sig_url="$msi_sig"
+          fi
           sig_content=""
-          if [ -n "$msi_sig" ] && [ "$msi_sig" != "null" ]; then
-            sig_content=$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/octet-stream" "$msi_sig" || true)
+          if [ -n "$sig_url" ] && [ "$sig_url" != "null" ]; then
+            sig_content=$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/octet-stream" "$sig_url" || true)
           fi
           pub_date=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           # Must match "Stamp personal version from tag" (scheme A date preferred):
@@ -299,12 +302,12 @@ jobs:
           else
             version="$version_tag"
           fi
-          if [ -n "$msi_url" ] && [ "$msi_url" != "null" ]; then
+          if [ -n "$asset_url" ]; then
             jq -n \
               --arg version "$version" \
               --arg notes "Personal Windows release ${TAG}" \
               --arg pub_date "$pub_date" \
-              --arg url "$msi_url" \
+              --arg url "$asset_url" \
               --arg signature "$sig_content" \
               '{
                 version: $version,
@@ -321,5 +324,5 @@ jobs:
             cat latest.json
             gh release upload "$TAG" latest.json --clobber --repo "$REPO"
           else
-            echo "No Windows MSI asset found; skip latest.json"
+            echo "No Windows NSIS/MSI asset found; skip latest.json"
           fi
