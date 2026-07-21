@@ -20,12 +20,14 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertTriangle,
   ArrowDownAZ,
+  CheckSquare,
   CircleCheck,
   Clock3,
   Filter,
   ListOrdered,
   CalendarDays,
   Search,
+  Square,
   Star,
   Trash2,
   X,
@@ -565,6 +567,15 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(
     const [scrollHighlightId, setScrollHighlightId] = useState<string | null>(
       null,
     );
+    /** 长按卡片空白进入的批量勾选模式 */
+    const [selectionMode, setSelectionMode] = useState(false);
+    const [selectedProviderIds, setSelectedProviderIds] = useState<Set<string>>(
+      () => new Set(),
+    );
+    const [selectionDeleteTargets, setSelectionDeleteTargets] = useState<
+      Provider[] | null
+    >(null);
+    const [isSelectionDeleting, setIsSelectionDeleting] = useState(false);
     const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
       null,
     );
@@ -921,6 +932,110 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(
         setIsCleaningByStatus(false);
       }
     }, [cleanupCandidates, onBulkDelete]);
+
+    const exitSelectionMode = useCallback(() => {
+      setSelectionMode(false);
+      setSelectedProviderIds(new Set());
+      setSelectionDeleteTargets(null);
+    }, []);
+
+    const enterSelectionMode = useCallback((providerId?: string) => {
+      setSelectionMode(true);
+      if (providerId) {
+        setSelectedProviderIds(new Set([providerId]));
+      }
+    }, []);
+
+    const toggleProviderSelected = useCallback(
+      (providerId: string, selected: boolean) => {
+        setSelectedProviderIds((current) => {
+          const next = new Set(current);
+          if (selected) next.add(providerId);
+          else next.delete(providerId);
+          return next;
+        });
+      },
+      [],
+    );
+
+    // 切换应用时退出勾选模式
+    useEffect(() => {
+      exitSelectionMode();
+    }, [appId, exitSelectionMode]);
+
+    // 仅保留当前可见列表中的勾选
+    useEffect(() => {
+      if (!selectionMode) return;
+      const visible = new Set(filteredProviders.map((p) => p.id));
+      setSelectedProviderIds((current) => {
+        let changed = false;
+        const next = new Set<string>();
+        current.forEach((id) => {
+          if (visible.has(id)) next.add(id);
+          else changed = true;
+        });
+        return changed ? next : current;
+      });
+    }, [filteredProviders, selectionMode]);
+
+    // Esc 退出勾选
+    useEffect(() => {
+      if (!selectionMode) return;
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (event.key !== "Escape") return;
+        if (isTextEditableTarget(event.target)) return;
+        event.preventDefault();
+        exitSelectionMode();
+      };
+      window.addEventListener("keydown", onKeyDown);
+      return () => window.removeEventListener("keydown", onKeyDown);
+    }, [exitSelectionMode, selectionMode]);
+
+    const selectedProviders = useMemo(
+      () =>
+        filteredProviders.filter((provider) =>
+          selectedProviderIds.has(provider.id),
+        ),
+      [filteredProviders, selectedProviderIds],
+    );
+
+    const allVisibleSelected =
+      filteredProviders.length > 0 &&
+      filteredProviders.every((provider) =>
+        selectedProviderIds.has(provider.id),
+      );
+
+    const someVisibleSelected =
+      !allVisibleSelected &&
+      filteredProviders.some((provider) =>
+        selectedProviderIds.has(provider.id),
+      );
+
+    const handleToggleSelectAllVisible = useCallback(() => {
+      if (allVisibleSelected) {
+        setSelectedProviderIds(new Set());
+        return;
+      }
+      setSelectedProviderIds(
+        new Set(filteredProviders.map((provider) => provider.id)),
+      );
+    }, [allVisibleSelected, filteredProviders]);
+
+    const handleConfirmSelectionDelete = useCallback(async () => {
+      const targets = selectionDeleteTargets ?? [];
+      if (!onBulkDelete || targets.length === 0) {
+        setSelectionDeleteTargets(null);
+        return;
+      }
+      setIsSelectionDeleting(true);
+      try {
+        await onBulkDelete(targets);
+        setSelectionDeleteTargets(null);
+        exitSelectionMode();
+      } finally {
+        setIsSelectionDeleting(false);
+      }
+    }, [exitSelectionMode, onBulkDelete, selectionDeleteTargets]);
 
     type AggregatedFilterBrand = {
       brand: string;
@@ -1330,9 +1445,11 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(
 
     const renderProviderList = () => (
       <DndContext
-        sensors={sortKey === "manual" ? sensors : []}
+        sensors={sortKey === "manual" && !selectionMode ? sensors : []}
         collisionDetection={closestCenter}
-        onDragEnd={sortKey === "manual" ? handleDragEnd : undefined}
+        onDragEnd={
+          sortKey === "manual" && !selectionMode ? handleDragEnd : undefined
+        }
       >
         <SortableContext
           items={filteredProviders.map((provider) => provider.id)}
@@ -1353,7 +1470,7 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(
                   key={provider.id}
                   provider={provider}
                   sequenceNumber={providerSequenceById.get(provider.id) ?? 0}
-                  dragDisabled={sortKey !== "manual"}
+                  dragDisabled={sortKey !== "manual" || selectionMode}
                   isCurrent={
                     isOmo
                       ? isOmoCurrent
@@ -1426,23 +1543,35 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(
                       ? (entry) => onModelsProbeResult(provider.id, entry)
                       : undefined
                   }
-                  canReorder={sortKey === "manual"}
+                  canReorder={sortKey === "manual" && !selectionMode}
                   canMoveUp={
                     sortKey === "manual" &&
+                    !selectionMode &&
                     (providerSequenceById.get(provider.id) ?? 0) > 1
                   }
                   canMoveDown={
                     sortKey === "manual" &&
+                    !selectionMode &&
                     (providerSequenceById.get(provider.id) ?? 0) <
                       displayProviders.length
                   }
                   onMoveUp={() => void moveProviderByOffset(provider.id, -1)}
                   onMoveDown={() => void moveProviderByOffset(provider.id, 1)}
-                  canPinToTop
+                  canPinToTop={!selectionMode}
                   onPinToTop={() => void handlePinProviderToTop(provider.id)}
                   scrollHighlight={scrollHighlightId === provider.id}
                   isFavorite={favoriteProviderIds.has(provider.id)}
                   onToggleFavorite={() => toggleProviderFavorite(provider.id)}
+                  selectionMode={selectionMode}
+                  isSelected={selectedProviderIds.has(provider.id)}
+                  onSelectionChange={(selected) =>
+                    toggleProviderSelected(provider.id, selected)
+                  }
+                  onEnterSelectionMode={
+                    onBulkDelete
+                      ? () => enterSelectionMode(provider.id)
+                      : undefined
+                  }
                 />
               );
             })}
@@ -1453,6 +1582,78 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(
 
     return (
       <div ref={listRootRef} className="space-y-4">
+        {selectionMode && (
+          <div className="sticky top-0 z-50 flex min-h-12 flex-wrap items-center gap-2 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 shadow-sm backdrop-blur-md">
+            <CheckSquare className="h-4 w-4 shrink-0 text-primary" />
+            <span className="text-sm font-medium text-foreground">
+              {t("provider.selectionModeTitle", {
+                defaultValue: "勾选模式",
+              })}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              {t("provider.selectionCount", {
+                count: selectedProviders.length,
+                total: filteredProviders.length,
+                defaultValue: `已选 ${selectedProviders.length} / ${filteredProviders.length}`,
+              })}
+            </span>
+            <div className="ml-auto flex flex-wrap items-center gap-1.5">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 text-xs"
+                onClick={handleToggleSelectAllVisible}
+                disabled={filteredProviders.length === 0}
+              >
+                {allVisibleSelected ? (
+                  <CheckSquare className="h-3.5 w-3.5" />
+                ) : someVisibleSelected ? (
+                  <Square className="h-3.5 w-3.5" />
+                ) : (
+                  <Square className="h-3.5 w-3.5" />
+                )}
+                {allVisibleSelected
+                  ? t("provider.deselectAll", { defaultValue: "取消全选" })
+                  : t("provider.selectAllVisible", {
+                      defaultValue: "全选当前列表",
+                    })}
+              </Button>
+              {onBulkDelete && (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  className="h-8 gap-1.5 text-xs"
+                  disabled={
+                    selectedProviders.length === 0 || isSelectionDeleting
+                  }
+                  onClick={() =>
+                    setSelectionDeleteTargets([...selectedProviders])
+                  }
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  {t("provider.deleteSelected", {
+                    count: selectedProviders.length,
+                    defaultValue: `删除所选 (${selectedProviders.length})`,
+                  })}
+                </Button>
+              )}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 gap-1.5 text-xs"
+                onClick={exitSelectionMode}
+              >
+                <X className="h-3.5 w-3.5" />
+                {t("provider.exitSelectionMode", {
+                  defaultValue: "退出",
+                })}
+              </Button>
+            </div>
+          </div>
+        )}
         <div className="sticky top-0 z-40 flex min-h-12 items-center gap-2 overflow-x-auto border-b border-border/60 bg-background/95 py-2 backdrop-blur-md">
           <div
             className="flex h-9 shrink-0 items-center gap-1 rounded-md bg-muted p-1"
@@ -2017,6 +2218,35 @@ export const ProviderList = forwardRef<ProviderListHandle, ProviderListProps>(
             if (!isCleaningByStatus) setCleanupCandidates(null);
           }}
         />
+        <ConfirmDialog
+          isOpen={Boolean(selectionDeleteTargets)}
+          title={t("provider.selectionDeleteConfirmTitle", {
+            defaultValue: "删除所选供应商",
+          })}
+          message={t("provider.selectionDeleteConfirmMessage", {
+            count: selectionDeleteTargets?.length ?? 0,
+            defaultValue: `将永久删除已勾选的 ${selectionDeleteTargets?.length ?? 0} 个供应商，此操作无法撤销。`,
+          })}
+          checkboxLabel={t("provider.selectionDeleteConfirmCheck", {
+            defaultValue: "我已确认删除所选供应商，且操作无法撤销",
+          })}
+          checkboxDefaultChecked={false}
+          requireCheckbox
+          confirmText={
+            isSelectionDeleting
+              ? t("provider.selectionDeleting", { defaultValue: "删除中…" })
+              : t("provider.confirmSelectionDelete", {
+                  defaultValue: "确认删除",
+                })
+          }
+          onConfirm={(checked) => {
+            if (!checked) return;
+            void handleConfirmSelectionDelete();
+          }}
+          onCancel={() => {
+            if (!isSelectionDeleting) setSelectionDeleteTargets(null);
+          }}
+        />
       </div>
     );
   },
@@ -2051,6 +2281,10 @@ interface SortableProviderCardProps {
   scrollHighlight?: boolean;
   isFavorite?: boolean;
   onToggleFavorite?: () => void;
+  selectionMode?: boolean;
+  isSelected?: boolean;
+  onSelectionChange?: (selected: boolean) => void;
+  onEnterSelectionMode?: () => void;
   isCurrent: boolean;
   appId: AppId;
   isInConfig: boolean;
@@ -2136,6 +2370,10 @@ function SortableProviderCard({
   scrollHighlight = false,
   isFavorite = false,
   onToggleFavorite,
+  selectionMode = false,
+  isSelected = false,
+  onSelectionChange,
+  onEnterSelectionMode,
 }: SortableProviderCardProps) {
   const {
     setNodeRef,
@@ -2219,6 +2457,10 @@ function SortableProviderCard({
         scrollHighlight={scrollHighlight}
         isFavorite={isFavorite}
         onToggleFavorite={onToggleFavorite}
+        selectionMode={selectionMode}
+        isSelected={isSelected}
+        onSelectionChange={onSelectionChange}
+        onEnterSelectionMode={onEnterSelectionMode}
       />
     </div>
   );

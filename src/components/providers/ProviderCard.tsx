@@ -1,4 +1,12 @@
-import { useMemo, useState, useEffect } from "react";
+import {
+  useMemo,
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  type PointerEvent as ReactPointerEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import {
   GripVertical,
   ChevronDown,
@@ -23,6 +31,7 @@ import type { AppId } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { deepClone } from "@/utils/deepClone";
 import { ProviderActions } from "@/components/providers/ProviderActions";
@@ -56,6 +65,33 @@ import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
+
+/** 长按空白进入勾选模式的按住时长（毫秒） */
+const SELECTION_LONG_PRESS_MS = 480;
+
+/** 点击/长按命中这些元素时，不视为「卡片空白区」 */
+function isInteractiveCardTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return Boolean(
+    target.closest(
+      [
+        "button",
+        "a",
+        "input",
+        "textarea",
+        "select",
+        "label",
+        "[role='button']",
+        "[role='checkbox']",
+        "[role='menuitem']",
+        "[role='combobox']",
+        "[data-no-long-press]",
+        "[data-provider-drag-handle]",
+        "[data-radix-collection-item]",
+      ].join(","),
+    ),
+  );
+}
 
 interface DragHandleProps {
   attributes: DraggableAttributes;
@@ -133,6 +169,14 @@ interface ProviderCardProps {
   scrollHighlight?: boolean;
   isFavorite?: boolean;
   onToggleFavorite?: () => void;
+  /** 是否处于批量勾选模式 */
+  selectionMode?: boolean;
+  /** 当前卡片是否已勾选 */
+  isSelected?: boolean;
+  /** 勾选变化（勾选模式下点空白/勾选框） */
+  onSelectionChange?: (selected: boolean) => void;
+  /** 长按空白进入勾选模式（并默认勾选本卡） */
+  onEnterSelectionMode?: () => void;
 }
 
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
@@ -257,6 +301,10 @@ export function ProviderCard({
   scrollHighlight = false,
   isFavorite = false,
   onToggleFavorite,
+  selectionMode = false,
+  isSelected = false,
+  onSelectionChange,
+  onEnterSelectionMode,
 }: ProviderCardProps) {
   const { t } = useTranslation();
   const modelLogoPack = useMemo(
@@ -266,6 +314,67 @@ export function ProviderCard({
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(provider.name);
   const [isSavingName, setIsSavingName] = useState(false);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressTriggeredRef = useRef(false);
+
+  const clearLongPressTimer = useCallback(() => {
+    if (longPressTimerRef.current != null) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => clearLongPressTimer();
+  }, [clearLongPressTimer]);
+
+  const handleCardPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      // 仅主指针；勾选模式内由点击切换，不再长按
+      if (event.button !== 0 || selectionMode || !onEnterSelectionMode) return;
+      if (isInteractiveCardTarget(event.target)) return;
+      if (isRenaming) return;
+
+      longPressTriggeredRef.current = false;
+      clearLongPressTimer();
+      longPressTimerRef.current = setTimeout(() => {
+        longPressTriggeredRef.current = true;
+        longPressTimerRef.current = null;
+        // 轻微触觉反馈（支持时）
+        try {
+          if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+            navigator.vibrate?.(12);
+          }
+        } catch {
+          // ignore
+        }
+        onEnterSelectionMode();
+      }, SELECTION_LONG_PRESS_MS);
+    },
+    [clearLongPressTimer, isRenaming, onEnterSelectionMode, selectionMode],
+  );
+
+  const handleCardPointerUpOrCancel = useCallback(() => {
+    clearLongPressTimer();
+  }, [clearLongPressTimer]);
+
+  const handleCardClick = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      // 长按刚触发后，松开可能仍会冒泡 click，吞掉避免误切供应商
+      if (longPressTriggeredRef.current) {
+        event.preventDefault();
+        event.stopPropagation();
+        longPressTriggeredRef.current = false;
+        return;
+      }
+      if (!selectionMode || !onSelectionChange) return;
+      if (isInteractiveCardTarget(event.target)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onSelectionChange(!isSelected);
+    },
+    [isSelected, onSelectionChange, selectionMode],
+  );
 
   useEffect(() => {
     if (!isRenaming) {
@@ -456,9 +565,19 @@ export function ProviderCard({
     <div
       data-provider-id={provider.id}
       data-provider-current={isCurrent ? "true" : "false"}
+      data-selection-mode={selectionMode ? "true" : "false"}
+      data-selected={isSelected ? "true" : "false"}
+      onPointerDown={handleCardPointerDown}
+      onPointerUp={handleCardPointerUpOrCancel}
+      onPointerCancel={handleCardPointerUpOrCancel}
+      onPointerLeave={handleCardPointerUpOrCancel}
+      onClick={handleCardClick}
       className={cn(
         "relative overflow-hidden rounded-xl border border-border p-4 transition-all duration-300 scroll-mt-24",
         "bg-card text-card-foreground group",
+        // 空白区长按提示；勾选模式下可点空白切换
+        !selectionMode && onEnterSelectionMode && "select-none",
+        selectionMode && "cursor-pointer",
         scrollHighlight &&
           "ring-2 ring-primary shadow-lg shadow-primary/25 border-primary/70 animate-pulse",
         isAutoFailoverEnabled || isProxyTakeover
@@ -482,6 +601,10 @@ export function ProviderCard({
           "hover:shadow-sm",
         dragHandleProps?.isDragging &&
           "cursor-grabbing border-primary shadow-lg scale-105 z-10",
+        // 勾选选中态放最后，避免被探测边框覆盖
+        selectionMode &&
+          isSelected &&
+          "border-primary/80 border-2 ring-2 ring-primary/45 shadow-md shadow-primary/20",
       )}
     >
       <div
@@ -508,9 +631,10 @@ export function ProviderCard({
             : "opacity-0",
         )}
       />
-      {onToggleFavorite && (
+      {onToggleFavorite && !selectionMode && (
         <button
           type="button"
+          data-no-long-press
           className={cn(
             "absolute left-2 top-2 z-30 inline-flex h-7 w-7 items-center justify-center rounded-md bg-card/90 shadow-sm ring-1 ring-border/50 backdrop-blur-sm transition-colors",
             isFavorite
@@ -537,8 +661,29 @@ export function ProviderCard({
           <Star className={cn("h-4 w-4", isFavorite && "fill-current")} />
         </button>
       )}
+      {selectionMode && (
+        <div
+          className="absolute left-2 top-2 z-30"
+          data-no-long-press
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <Checkbox
+            checked={isSelected}
+            onCheckedChange={(value) => {
+              onSelectionChange?.(value === true);
+            }}
+            className="h-5 w-5 border-2 bg-card/95 shadow-sm"
+            aria-label={t("provider.selectProviderAria", {
+              name: provider.name,
+              defaultValue: `选择 ${provider.name}`,
+            })}
+          />
+        </div>
+      )}
       <div
         className="absolute right-2 top-2 z-30 rounded-full bg-card/90 p-0.5 shadow-sm ring-1 ring-border/50 backdrop-blur-sm"
+        data-no-long-press
         role="img"
         title={
           modelsProbeHistoryStatus === "success"
@@ -590,8 +735,9 @@ export function ProviderCard({
                 {sequenceNumber}
               </span>
             )}
-            {canReorder && (
+            {canReorder && !selectionMode && (
               <div
+                data-provider-drag-handle
                 className={cn(
                   "flex flex-col items-center gap-0",
                   "opacity-0 transition-opacity duration-150",
@@ -1147,7 +1293,7 @@ export function ProviderCard({
     </div>
   );
 
-  if (!onCopyToApp) {
+  if (!onCopyToApp || selectionMode) {
     return card;
   }
 
