@@ -1117,13 +1117,22 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             }
         }
         AppType::OpenClaw => {
-            // OpenClaw uses additive mode - write provider to config
+            // OpenClaw uses additive mode - write provider to config.
+            // When DB key/model is dirty/stale but live already has a good value,
+            // keep the good live fields (merge prefers good DB, else live).
             use crate::openclaw_config;
             use crate::openclaw_config::OpenClawProviderConfig;
 
-            // Convert settings_config to OpenClawProviderConfig
+            let to_write = if let Some(live) =
+                openclaw_config::get_provider(&provider.id).ok().flatten()
+            {
+                merge_openclaw_settings_for_live_write(&provider.settings_config, &live)
+            } else {
+                sanitize_openclaw_settings_on_import(provider.settings_config.clone())
+            };
+
             let openclaw_config_result =
-                serde_json::from_value::<OpenClawProviderConfig>(provider.settings_config.clone());
+                serde_json::from_value::<OpenClawProviderConfig>(to_write.clone());
 
             match openclaw_config_result {
                 Ok(config) => {
@@ -1136,15 +1145,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                         provider.id,
                         e
                     );
-                    // Try to write as raw JSON if it looks valid
-                    if provider.settings_config.get("baseUrl").is_some()
-                        || provider.settings_config.get("api").is_some()
-                        || provider.settings_config.get("models").is_some()
+                    if to_write.get("baseUrl").is_some()
+                        || to_write.get("api").is_some()
+                        || to_write.get("models").is_some()
                     {
-                        openclaw_config::set_provider(
-                            &provider.id,
-                            provider.settings_config.clone(),
-                        )?;
+                        openclaw_config::set_provider(&provider.id, to_write)?;
                         log::info!(
                             "OpenClaw provider '{}' written as raw JSON to live config",
                             provider.id
@@ -1755,6 +1760,232 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
     Ok(imported + updated)
 }
 
+
+/// OpenClaw credential/model hygiene for live ↔ DB import.
+///
+/// Live files sometimes contain placeholder or garbage apiKey values (error
+/// strings, UI labels) and stale default models (`gpt-5.5`) written by older
+/// CC Switch universal templates. When merging, keep the healthier side.
+
+fn openclaw_api_key_looks_dirty(key: &str) -> bool {
+    let k = key.trim();
+    if k.is_empty() {
+        return true;
+    }
+    // Common placeholders
+    let lower = k.to_ascii_lowercase();
+    if matches!(
+        lower.as_str(),
+        "your-api-key"
+            | "your_api_key"
+            | "sk-xxx"
+            | "sk-test"
+            | "changeme"
+            | "placeholder"
+            | "api-key"
+            | "apikey"
+    ) {
+        return true;
+    }
+    // Error / UI garbage (user-reported: "Ori and the Blind Forest", ERR_*)
+    if lower.starts_with("err_")
+        || lower.contains("unreachable")
+        || lower.contains("forbidden")
+        || lower.contains("not found")
+        || lower.contains("invalid")
+        || k.contains(' ')
+    {
+        return true;
+    }
+    // Extremely short non-token junk
+    if k.len() < 8 {
+        return true;
+    }
+    false
+}
+
+fn openclaw_model_looks_stale_default(model: &str) -> bool {
+    matches!(
+        model.trim().to_ascii_lowercase().as_str(),
+        "gpt-5.5" | "gpt-5" | "gpt-4o" | "gpt-4.1"
+    )
+}
+
+fn openclaw_str_field<'a>(value: &'a serde_json::Value, keys: &[&str]) -> Option<&'a str> {
+    let obj = value.as_object()?;
+    for key in keys {
+        if let Some(s) = obj.get(*key).and_then(|v| v.as_str()) {
+            let t = s.trim();
+            if !t.is_empty() {
+                return Some(t);
+            }
+        }
+    }
+    None
+}
+
+fn openclaw_first_model_id(value: &serde_json::Value) -> Option<String> {
+    let models = value.get("models")?;
+    if let Some(arr) = models.as_array() {
+        for entry in arr {
+            if let Some(id) = entry.get("id").and_then(|v| v.as_str()) {
+                let id = id.trim();
+                if !id.is_empty() {
+                    return Some(id.to_string());
+                }
+            }
+            if let Some(id) = entry.as_str() {
+                let id = id.trim();
+                if !id.is_empty() {
+                    return Some(id.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn sanitize_openclaw_settings_on_import(mut live: serde_json::Value) -> serde_json::Value {
+    if let Some(obj) = live.as_object_mut() {
+        if let Some(key) = obj.get("apiKey").and_then(|v| v.as_str()) {
+            if openclaw_api_key_looks_dirty(key) {
+                // Keep empty rather than importing garbage that later overwrites good DB keys.
+                obj.insert("apiKey".to_string(), serde_json::Value::String(String::new()));
+            }
+        }
+        if let Some(key) = obj.get("api_key").and_then(|v| v.as_str()) {
+            if openclaw_api_key_looks_dirty(key) {
+                obj.insert("api_key".to_string(), serde_json::Value::String(String::new()));
+            }
+        }
+    }
+    live
+}
+
+/// Field-wise merge: prefer good DB credentials/models over dirty/stale live values.
+fn merge_openclaw_settings_prefer_good(
+    db: &serde_json::Value,
+    live: &serde_json::Value,
+) -> serde_json::Value {
+    let mut out = live.clone();
+    let Some(out_obj) = out.as_object_mut() else {
+        return sanitize_openclaw_settings_on_import(live.clone());
+    };
+    let db_obj = db.as_object();
+
+    // apiKey
+    let live_key = openclaw_str_field(live, &["apiKey", "api_key"]).unwrap_or("");
+    let db_key = openclaw_str_field(db, &["apiKey", "api_key"]).unwrap_or("");
+    let prefer_db_key = openclaw_api_key_looks_dirty(live_key)
+        && !openclaw_api_key_looks_dirty(db_key);
+    if prefer_db_key {
+        out_obj.insert("apiKey".to_string(), serde_json::Value::String(db_key.to_string()));
+        // drop snake_case duplicate if present
+        out_obj.remove("api_key");
+    } else if openclaw_api_key_looks_dirty(live_key) {
+        out_obj.insert("apiKey".to_string(), serde_json::Value::String(String::new()));
+        out_obj.remove("api_key");
+    }
+
+    // baseUrl: keep live if non-empty, else DB
+    let live_url = openclaw_str_field(live, &["baseUrl", "baseURL", "base_url"]).unwrap_or("");
+    let db_url = openclaw_str_field(db, &["baseUrl", "baseURL", "base_url"]).unwrap_or("");
+    if live_url.is_empty() && !db_url.is_empty() {
+        out_obj.insert("baseUrl".to_string(), serde_json::Value::String(db_url.to_string()));
+    }
+
+    // api protocol: keep live if set; else DB
+    let live_api = openclaw_str_field(live, &["api"]).unwrap_or("");
+    let db_api = openclaw_str_field(db, &["api"]).unwrap_or("");
+    if live_api.is_empty() && !db_api.is_empty() {
+        out_obj.insert("api".to_string(), serde_json::Value::String(db_api.to_string()));
+    }
+
+    // models: if live primary is stale default and DB has a better model, keep DB models
+    let live_model = openclaw_first_model_id(live).unwrap_or_default();
+    let db_model = openclaw_first_model_id(db).unwrap_or_default();
+    let prefer_db_models = openclaw_model_looks_stale_default(&live_model)
+        && !db_model.is_empty()
+        && !openclaw_model_looks_stale_default(&db_model);
+    if prefer_db_models {
+        if let Some(db_models) = db.get("models") {
+            out_obj.insert("models".to_string(), db_models.clone());
+        }
+    } else if live.get("models").and_then(|m| m.as_array()).map(|a| a.is_empty()).unwrap_or(true)
+    {
+        if let Some(db_models) = db.get("models") {
+            out_obj.insert("models".to_string(), db_models.clone());
+        }
+    }
+
+    // Preserve other DB-only keys that live omitted (non-credential extras)
+    if let Some(db_obj) = db_obj {
+        for (k, v) in db_obj {
+            if !out_obj.contains_key(k) {
+                out_obj.insert(k.clone(), v.clone());
+            }
+        }
+    }
+
+    out
+}
+
+
+/// DB → live write merge: start from DB, only borrow live fields when DB is dirty/empty.
+fn merge_openclaw_settings_for_live_write(
+    db: &serde_json::Value,
+    live: &serde_json::Value,
+) -> serde_json::Value {
+    let mut out = db.clone();
+    let Some(out_obj) = out.as_object_mut() else {
+        return sanitize_openclaw_settings_on_import(db.clone());
+    };
+
+    let db_key = openclaw_str_field(db, &["apiKey", "api_key"]).unwrap_or("");
+    let live_key = openclaw_str_field(live, &["apiKey", "api_key"]).unwrap_or("");
+    if openclaw_api_key_looks_dirty(db_key) && !openclaw_api_key_looks_dirty(live_key) {
+        out_obj.insert(
+            "apiKey".to_string(),
+            serde_json::Value::String(live_key.to_string()),
+        );
+        out_obj.remove("api_key");
+    } else if openclaw_api_key_looks_dirty(db_key) {
+        out_obj.insert("apiKey".to_string(), serde_json::Value::String(String::new()));
+        out_obj.remove("api_key");
+    }
+
+    let db_url = openclaw_str_field(db, &["baseUrl", "baseURL", "base_url"]).unwrap_or("");
+    let live_url = openclaw_str_field(live, &["baseUrl", "baseURL", "base_url"]).unwrap_or("");
+    if db_url.is_empty() && !live_url.is_empty() {
+        out_obj.insert(
+            "baseUrl".to_string(),
+            serde_json::Value::String(live_url.to_string()),
+        );
+    }
+
+    let db_api = openclaw_str_field(db, &["api"]).unwrap_or("");
+    let live_api = openclaw_str_field(live, &["api"]).unwrap_or("");
+    if db_api.is_empty() && !live_api.is_empty() {
+        out_obj.insert(
+            "api".to_string(),
+            serde_json::Value::String(live_api.to_string()),
+        );
+    }
+
+    let db_model = openclaw_first_model_id(db).unwrap_or_default();
+    let live_model = openclaw_first_model_id(live).unwrap_or_default();
+    let prefer_live_models = (openclaw_model_looks_stale_default(&db_model) || db_model.is_empty())
+        && !live_model.is_empty()
+        && !openclaw_model_looks_stale_default(&live_model);
+    if prefer_live_models {
+        if let Some(live_models) = live.get("models") {
+            out_obj.insert("models".to_string(), live_models.clone());
+        }
+    }
+
+    out
+}
+
 /// Import all providers from OpenClaw live config to database
 ///
 /// This imports existing providers from ~/.openclaw/openclaw.json
@@ -1795,16 +2026,25 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
         if existing_ids.contains(&id) {
             match state.db.get_provider_by_id(&id, "openclaw") {
                 Ok(Some(existing)) => {
-                    if existing.settings_config != settings_config {
+                    // Never blindly overwrite DB with live: live may carry dirty
+                    // keys / gpt-5.5 placeholders after a bad earlier sync. Prefer
+                    // the healthier side field-by-field.
+                    let merged = merge_openclaw_settings_prefer_good(
+                        &existing.settings_config,
+                        &settings_config,
+                    );
+                    if merged != existing.settings_config {
                         let mut provider = existing;
-                        provider.settings_config = settings_config;
+                        provider.settings_config = merged;
                         if let Err(e) = state.db.save_provider("openclaw", &provider) {
                             log::warn!(
                                 "Failed to update OpenClaw provider '{id}' from live config: {e}"
                             );
                         } else {
                             updated += 1;
-                            log::info!("Updated OpenClaw provider '{id}' from live config");
+                            log::info!(
+                                "Updated OpenClaw provider '{id}' from live config (protected merge)"
+                            );
                         }
                     }
                 }
@@ -1823,7 +2063,8 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
             .and_then(|m| m.name.clone())
             .unwrap_or_else(|| id.clone());
 
-        // Create provider
+        // Create provider (still sanitize obvious dirty keys from live)
+        let settings_config = sanitize_openclaw_settings_on_import(settings_config);
         let mut provider = Provider::with_id(id.clone(), display_name, settings_config, None);
         provider.meta = Some(crate::provider::ProviderMeta {
             live_config_managed: Some(true),
@@ -2590,5 +2831,56 @@ base_url = "https://a.example/v1"
 
         assert!(!config_text.contains("mcp_servers"));
         assert!(config_text.contains("model = \"grok-4.5\""));
+    }
+
+    #[test]
+    fn merge_openclaw_settings_prefer_good_keeps_good_db_key() {
+        let db = json!({
+            "baseUrl": "http://192.168.100.99:8000/v1",
+            "apiKey": "g2a_real_key_abcdef",
+            "api": "openai-responses",
+            "models": [{ "id": "grok-4.5", "name": "grok-4.5" }]
+        });
+        let live = json!({
+            "baseUrl": "http://192.168.100.99:8000/v1",
+            "apiKey": "ERR_ADDRESS_UNREACHABLE",
+            "api": "openai-completions",
+            "models": [{ "id": "gpt-5.5", "name": "gpt-5.5" }]
+        });
+        let merged = merge_openclaw_settings_prefer_good(&db, &live);
+        assert_eq!(merged["apiKey"], "g2a_real_key_abcdef");
+        assert_eq!(merged["models"][0]["id"], "grok-4.5");
+        // live api is non-empty so kept; dirty key/model recovered from db
+        assert_eq!(merged["api"], "openai-completions");
+    }
+
+    #[test]
+    fn merge_openclaw_settings_for_live_write_prefers_good_db() {
+        let db = json!({
+            "baseUrl": "http://192.168.100.99:8000/v1",
+            "apiKey": "g2a_real_key_abcdef",
+            "api": "openai-responses",
+            "models": [{ "id": "grok-4.5", "name": "grok-4.5" }]
+        });
+        let live = json!({
+            "baseUrl": "https://bad.example/v1",
+            "apiKey": "ERR_ADDRESS_UNREACHABLE",
+            "api": "openai-completions",
+            "models": [{ "id": "gpt-5.5", "name": "gpt-5.5" }]
+        });
+        let merged = merge_openclaw_settings_for_live_write(&db, &live);
+        assert_eq!(merged["apiKey"], "g2a_real_key_abcdef");
+        assert_eq!(merged["models"][0]["id"], "grok-4.5");
+        assert_eq!(merged["api"], "openai-responses");
+        assert_eq!(merged["baseUrl"], "http://192.168.100.99:8000/v1");
+    }
+
+    #[test]
+    fn openclaw_api_key_dirty_detection() {
+        assert!(openclaw_api_key_looks_dirty(""));
+        assert!(openclaw_api_key_looks_dirty("ERR_ADDRESS_UNREACHABLE"));
+        assert!(openclaw_api_key_looks_dirty("Ori and the Blind Forest"));
+        assert!(openclaw_api_key_looks_dirty("sk-xxx"));
+        assert!(!openclaw_api_key_looks_dirty("g2a_real_key_abcdef012345"));
     }
 }

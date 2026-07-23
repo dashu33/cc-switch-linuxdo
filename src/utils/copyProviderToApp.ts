@@ -52,7 +52,7 @@ const DEFAULT_MODELS: Partial<Record<AppId, string>> = {
   codex: "gpt-5.5",
   gemini: "gemini-3.5-flash",
   opencode: "gpt-5.5",
-  openclaw: "gpt-5.5",
+  openclaw: "grok-4.5",
   hermes: "gpt-5.5",
   grokbuild: GROK_BUILD_DEFAULT_MODEL,
 };
@@ -311,10 +311,16 @@ function buildSettingsConfig(
   }
 
   if (targetApp === "openclaw") {
+    // Prefer Responses for Grok-family models; otherwise OpenAI Completions.
+    const modelLower = model.toLowerCase();
+    const api =
+      modelLower.includes("grok") || modelLower.startsWith("grok")
+        ? "openai-responses"
+        : "openai-completions";
     return {
       baseUrl,
       apiKey,
-      api: "openai-completions",
+      api,
       models: [
         {
           id: model,

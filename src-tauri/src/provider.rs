@@ -773,6 +773,35 @@ pub struct UniversalProvider {
     pub sort_index: Option<usize>,
 }
 
+
+/// Map CC Switch `meta.apiFormat` + model hints to OpenClaw `api` protocol.
+///
+/// OpenClaw talks upstream directly (no local proxy). Grok-family gateways
+/// typically need Responses; generic OpenAI-compatible chat stays Completions.
+fn openclaw_api_from_meta_and_model(
+    api_format: Option<&str>,
+    model: &str,
+    prefer_responses: bool,
+) -> &'static str {
+    let normalized = api_format.unwrap_or("").trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "openai_responses" | "openai-responses" | "responses" => "openai-responses",
+        "openai_chat" | "openai-chat" | "openai-completions" | "chat_completions" => {
+            "openai-completions"
+        }
+        "anthropic" | "anthropic-messages" | "anthropic_messages" => "anthropic-messages",
+        "gemini_native" | "google-generative-ai" | "google" => "google-generative-ai",
+        _ => {
+            let model_l = model.to_ascii_lowercase();
+            if prefer_responses || model_l.contains("grok") {
+                "openai-responses"
+            } else {
+                "openai-completions"
+            }
+        }
+    }
+}
+
 impl UniversalProvider {
     fn strip_trailing_path_suffix(base_url: &str, suffixes: &[&str]) -> String {
         let trimmed = base_url.trim().trim_end_matches('/');
@@ -1131,25 +1160,49 @@ requires_openai_auth = true"#
     }
 
     /// 生成 OpenClaw 供应商配置
+    ///
+    /// 模型优先级：`models.grokbuild` → `models.codex` → `grok-4.5`。
+    /// 历史上误绑 Codex 的 `gpt-5.5` 导致 OpenClaw 直连上游时 model_not_found。
+    /// API 协议：显式 `meta.apiFormat` 优先；Grok 系默认 `openai-responses`。
     pub fn to_openclaw_provider(&self) -> Option<Provider> {
         if !self.apps.openclaw {
             return None;
         }
 
+        let from_grok = self
+            .models
+            .grokbuild
+            .as_ref()
+            .and_then(|m| m.model.as_ref())
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
         let model = self
             .models
-            .codex
+            .grokbuild
             .as_ref()
             .and_then(|m| m.model.clone())
-            .unwrap_or_else(|| "gpt-5.5".to_string());
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| {
+                self.models
+                    .codex
+                    .as_ref()
+                    .and_then(|m| m.model.clone())
+                    .filter(|s| !s.trim().is_empty())
+            })
+            .unwrap_or_else(|| crate::grok_config::DEFAULT_MODEL.to_string());
         let base_url = self.openai_compatible_base_url();
+        let api = openclaw_api_from_meta_and_model(
+            self.meta.as_ref().and_then(|m| m.api_format.as_deref()),
+            &model,
+            from_grok,
+        );
         Some(Provider {
             id: format!("universal-openclaw-{}", self.id),
             name: self.name.clone(),
             settings_config: serde_json::json!({
                 "baseUrl": base_url,
                 "apiKey": self.api_key,
-                "api": "openai-completions",
+                "api": api,
                 "models": [{ "id": model, "name": model }]
             }),
             website_url: self.website_url.clone(),
@@ -1767,8 +1820,22 @@ mod tests {
         assert_eq!(opencode.id, "universal-opencode-newapi");
 
         let openclaw = universal.to_openclaw_provider().expect("OpenClaw provider");
-        assert_eq!(openclaw.settings_config["api"], "openai-completions");
+        // Default model prefers Grok (not Codex gpt-5.5); api follows Grok → responses.
+        assert_eq!(openclaw.settings_config["api"], "openai-responses");
+        assert_eq!(openclaw.settings_config["models"][0]["id"], "grok-4.5");
         assert_eq!(openclaw.id, "universal-openclaw-newapi");
+
+        // Explicit grokbuild model wins over codex.
+        universal.models.grokbuild = Some(GrokBuildModelConfig {
+            model: Some("grok-4.5".to_string()),
+        });
+        universal.models.codex = Some(CodexModelConfig {
+            model: Some("gpt-5.5".to_string()),
+            reasoning_effort: None,
+        });
+        let openclaw_grok = universal.to_openclaw_provider().expect("OpenClaw provider");
+        assert_eq!(openclaw_grok.settings_config["models"][0]["id"], "grok-4.5");
+        assert_eq!(openclaw_grok.settings_config["api"], "openai-responses");
 
         let hermes = universal.to_hermes_provider().expect("Hermes provider");
         assert_eq!(

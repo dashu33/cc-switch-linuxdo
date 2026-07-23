@@ -1957,6 +1957,59 @@ requires_openai_auth = true
     }
 }
 
+
+/// After switching an OpenClaw provider, set `agents.defaults.model.primary`
+/// to `providerId/modelId` so the gateway actually uses the selected provider.
+fn apply_openclaw_switch_defaults(provider: &Provider) -> Result<(), AppError> {
+    use crate::openclaw_config::{OpenClawDefaultModel, set_default_model};
+
+    let models = provider
+        .settings_config
+        .get("models")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    if models.is_empty() {
+        return Err(AppError::Message(format!(
+            "OpenClaw provider '{}' has no models; cannot set default",
+            provider.id
+        )));
+    }
+
+    let mut model_ids: Vec<String> = Vec::new();
+    for entry in &models {
+        let id = entry
+            .get("id")
+            .and_then(|v| v.as_str())
+            .or_else(|| entry.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        if let Some(id) = id {
+            model_ids.push(id.to_string());
+        }
+    }
+    if model_ids.is_empty() {
+        return Err(AppError::Message(format!(
+            "OpenClaw provider '{}' models lack id fields",
+            provider.id
+        )));
+    }
+
+    let primary = format!("{}/{}", provider.id, model_ids[0]);
+    let fallbacks = model_ids
+        .iter()
+        .skip(1)
+        .map(|m| format!("{}/{}", provider.id, m))
+        .collect();
+    let model = OpenClawDefaultModel {
+        primary,
+        fallbacks,
+        extra: Default::default(),
+    };
+    set_default_model(&model)?;
+    Ok(())
+}
+
 impl ProviderService {
     fn normalize_provider_if_claude(app_type: &AppType, provider: &mut Provider) {
         if matches!(app_type, AppType::Claude) {
@@ -2668,12 +2721,12 @@ impl ProviderService {
             }
         }
 
-        // Additive mode apps skip setting is_current (no such concept)
-        if !app_type.is_additive_mode() {
-            // Update local settings (device-level, takes priority)
+        // Exclusive-mode apps use is_current for "the" active provider.
+        // OpenClaw is additive (all providers coexist in openclaw.json) but we
+        // still record a preferred current id so the UI can highlight it and
+        // agents.defaults.model can follow the selected provider.
+        if !app_type.is_additive_mode() || matches!(app_type, AppType::OpenClaw) {
             crate::settings::set_current_provider(&app_type, Some(id))?;
-
-            // Update database is_current (as default for new devices)
             state.db.set_current_provider(app_type.as_str(), id)?;
         }
 
@@ -2696,6 +2749,19 @@ impl ProviderService {
                 result
                     .warnings
                     .push(format!("hermes_model_defaults_failed:{}", provider.id));
+            }
+        }
+
+        // OpenClaw: point agents.defaults.model.primary at this provider's first model.
+        if matches!(app_type, AppType::OpenClaw) {
+            if let Err(e) = apply_openclaw_switch_defaults(provider) {
+                log::warn!(
+                    "Failed to update OpenClaw default model after switching to '{}': {e}",
+                    provider.id
+                );
+                result
+                    .warnings
+                    .push(format!("openclaw_model_defaults_failed:{}", provider.id));
             }
         }
 
