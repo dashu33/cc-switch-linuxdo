@@ -337,7 +337,20 @@ pub fn sync_session_usage(
         }
     }
 
-    Ok(result)
+    
+    match crate::services::session_usage_openclaw::sync_openclaw_usage(&state.db) {
+        Ok(openclaw_result) => {
+            result.imported += openclaw_result.imported;
+            result.skipped += openclaw_result.skipped;
+            result.files_scanned += openclaw_result.files_scanned;
+            result.errors.extend(openclaw_result.errors);
+        }
+        Err(e) => {
+            result.errors.push(format!("OpenClaw sync failed: {e}"));
+        }
+    }
+
+Ok(result)
 }
 
 /// 获取数据来源分布

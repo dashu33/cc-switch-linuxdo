@@ -6,8 +6,9 @@
 
 | 文件 | 角色 |
 |------|------|
-| `src-tauri/src/services/usage_stats.rs` | `ProviderStats` 聚合；`get_recent_calls_by_provider` 批量 lite |
-| `src-tauri/src/commands/usage.rs` | `get_recent_calls_by_provider` 命令 |
+| `src-tauri/src/services/usage_stats.rs` | `ProviderStats` 聚合；`get_recent_calls_by_provider` 批量 lite；`provider_name_coalesce` 含 `_openclaw_session` |
+| `src-tauri/src/services/session_usage_openclaw.rs` | OpenClaw JSONL + SQLite 会话用量 → `proxy_request_logs`（`data_source=openclaw_session`） |
+| `src-tauri/src/commands/usage.rs` | `get_recent_calls_by_provider`；`sync_session_usage` 含 openclaw |
 | `src-tauri/src/lib.rs` | 注册 invoke |
 | `src/types/usage.ts` | `UsageRangePreset` 含 `"5m"`；`ProviderStats`；`RecentCallLite` / `ProviderRecentCalls` |
 | `src/lib/usageRange.ts` | `resolveUsageRange("5m")` → now-300s |
@@ -97,6 +98,10 @@ isFetching?: boolean
 ```bash
 # 后端单元（含批量最近调用）
 cargo test -p cc-switch --lib services::usage_stats::tests::test_get_recent_calls_by_provider_groups_and_limits -- --nocapture
+
+```powershell
+cargo test -p cc-switch --lib services::session_usage_openclaw -- --nocapture
+```
 
 # 前端布局契约
 pnpm exec vitest run tests/components/ProviderCardLayout.test.ts

@@ -96,6 +96,27 @@
 - [ ] 从设置返回供应商列表时最近调用立刻用缓存展示，不整页卡死
 - [ ] Grok → Codex（或任意 app 切换）不因 N 路最近调用长时间卡住；DevTools/日志仅见 1 次 `get_recent_calls_by_provider`
 
+
+
+## OpenClaw 会话导入（增量）
+
+OpenClaw **无本地 proxy 接管**，最近调用/成功率原先恒空。现增加会话同步：
+
+| 项 | 说明 |
+|----|------|
+| 入口 | 用量页「同步会话」→ `sync_session_usage` 含 `sync_openclaw_usage` |
+| 源 1 | `~/.openclaw/agents/<agent>/sessions/*.jsonl`（旧 JSONL） |
+| 源 2 | `~/.openclaw/agents/<agent>/agent/openclaw-agent.sqlite` 的 `transcript_events` |
+| 写入 | `proxy_request_logs`，`app_type=openclaw`，`data_source=openclaw_session` |
+| 供应商匹配 | 日志 `provider` == 供应商 id；否则模型 id 命中 `models[].id`；否则 `_openclaw_session` → 展示名「OpenClaw (Session)」 |
+| 卡片匹配 | `ProviderList` 按 `provider.name` 分发；匹配成功时行内最近调用/统计有数据 |
+
+回归：
+
+- [ ] 有 OpenClaw JSONL/SQLite 会话时点同步，用量页/OpenClaw 卡出现最近调用
+- [ ] 模型写入在供应商 models 列表内时，命中真实供应商名而非 Session 占位
+- [ ] 无会话目录时同步不报错、导入 0
+
 ## 相关文档
 
 - 代码地图：[CODEMAP.md](./CODEMAP.md)
