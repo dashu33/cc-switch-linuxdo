@@ -71,13 +71,13 @@ describe("ProviderCard layout", () => {
     expect(nestedSummaryIdx).toBeGreaterThan(codexIdx);
   });
 
-  it("keeps inline model fetching visible for Codex and the Claude family", () => {
+  it("keeps inline model fetching via supportsProviderQuickAdjust (incl. openclaw)", () => {
     expect(source).toContain("const hasInlineQuickAdjust =");
-    expect(source).toContain('appId === "codex"');
-    expect(source).toContain('appId === "claude"');
-    expect(source).toContain('appId === "claude-desktop"');
+    expect(source).toContain("supportsProviderQuickAdjust(appId)");
     expect(source).toContain("hasInlineQuickAdjust && onUpdate");
     expect(source).toContain("appId={appId}");
+    expect(quickAdjust).toContain("isOpenClawApp");
+    expect(quickAdjust).toContain("resolveProviderKnownModelIds");
   });
 
   it("widens the recent-calls column and contains hover actions inside it", () => {

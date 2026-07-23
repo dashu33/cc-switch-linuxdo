@@ -441,8 +441,11 @@ export function ProviderCard({
     appId === "hermes" && isHermesReadOnlyProvider(provider.settingsConfig);
   const isCodexOauth =
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
+  // Hermes v12+ providers: dict 源只读，不挂卡片快捷调整
   const hasInlineQuickAdjust =
-    Boolean(onUpdate) && supportsProviderQuickAdjust(appId);
+    Boolean(onUpdate) &&
+    supportsProviderQuickAdjust(appId) &&
+    !isHermesReadOnly;
   const needsRouting = useMemo(
     () => providerNeedsRouting(provider, appId),
     [appId, provider],

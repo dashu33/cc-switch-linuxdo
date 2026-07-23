@@ -28,6 +28,10 @@ export const PROVIDER_QUICK_ADJUST_APP_IDS: AppId[] = [
   "claude",
   "claude-desktop",
   "grokbuild",
+  "openclaw",
+  "gemini",
+  "opencode",
+  "hermes",
 ];
 
 export function supportsProviderQuickAdjust(appId: AppId): boolean {
@@ -36,6 +40,30 @@ export function supportsProviderQuickAdjust(appId: AppId): boolean {
 
 export function isClaudeFamilyApp(appId: AppId): boolean {
   return appId === "claude" || appId === "claude-desktop";
+}
+
+export function isOpenClawApp(appId: AppId): boolean {
+  return appId === "openclaw";
+}
+
+export function isGeminiApp(appId: AppId): boolean {
+  return appId === "gemini";
+}
+
+export function isOpenCodeApp(appId: AppId): boolean {
+  return appId === "opencode";
+}
+
+export function isHermesApp(appId: AppId): boolean {
+  return appId === "hermes";
+}
+
+/**
+ * Apps that talk to upstream with their own protocol field (no local proxy
+ * conversion). Card labels therefore omit "需开启路由".
+ */
+export function usesDirectUpstreamFormat(appId: AppId): boolean {
+  return isOpenClawApp(appId) || isOpenCodeApp(appId) || isHermesApp(appId);
 }
 
 export function grokApiBackendFromApiFormat(
@@ -67,6 +95,135 @@ export function grokApiFormatFromBackend(
   return "openai_responses";
 }
 
+/** Map OpenClaw native `api` protocol → card format value. */
+export function openclawApiFormatFromProtocol(
+  api: string | undefined,
+): ProviderQuickApiFormat {
+  const normalized = (api || "").trim().toLowerCase();
+  if (
+    normalized === "openai-completions" ||
+    normalized === "openai_chat" ||
+    normalized === "openai-chat"
+  ) {
+    return "openai_chat";
+  }
+  if (
+    normalized === "openai-responses" ||
+    normalized === "openai_responses" ||
+    normalized === "responses"
+  ) {
+    return "openai_responses";
+  }
+  if (
+    normalized === "anthropic-messages" ||
+    normalized === "anthropic" ||
+    normalized === "anthropic_messages"
+  ) {
+    return "anthropic";
+  }
+  if (
+    normalized === "google-generative-ai" ||
+    normalized === "gemini_native" ||
+    normalized === "gemini-native" ||
+    normalized === "google"
+  ) {
+    return "gemini_native";
+  }
+  // bedrock-converse-stream and unknown → treat as chat-compatible default
+  return "openai_chat";
+}
+
+/** Map card format value → OpenClaw native `api` protocol. */
+export function openclawProtocolFromApiFormat(
+  format: ProviderQuickApiFormat,
+): string {
+  if (format === "openai_responses") return "openai-responses";
+  if (format === "anthropic") return "anthropic-messages";
+  if (format === "gemini_native") return "google-generative-ai";
+  return "openai-completions";
+}
+
+/** Map OpenCode `npm` package → card format value. */
+export function opencodeApiFormatFromNpm(
+  npm: string | undefined,
+): ProviderQuickApiFormat {
+  const normalized = (npm || "").trim().toLowerCase();
+  // Order matters: openai-compatible must win over bare "openai" substring.
+  if (
+    normalized === "@ai-sdk/openai-compatible" ||
+    normalized.endsWith("/openai-compatible") ||
+    normalized.includes("openai-compatible")
+  ) {
+    return "openai_chat";
+  }
+  if (
+    normalized === "@ai-sdk/openai" ||
+    normalized === "openai" ||
+    normalized.endsWith("/openai")
+  ) {
+    return "openai_responses";
+  }
+  if (
+    normalized === "@ai-sdk/anthropic" ||
+    normalized.endsWith("/anthropic") ||
+    normalized.includes("anthropic")
+  ) {
+    return "anthropic";
+  }
+  if (
+    normalized === "@ai-sdk/google" ||
+    normalized.endsWith("/google") ||
+    normalized.includes("gemini")
+  ) {
+    return "gemini_native";
+  }
+  // amazon-bedrock and unknown → chat-compatible default
+  return "openai_chat";
+}
+
+/** Map card format → OpenCode `npm` package. */
+export function opencodeNpmFromApiFormat(
+  format: ProviderQuickApiFormat,
+): string {
+  if (format === "openai_responses") return "@ai-sdk/openai";
+  if (format === "anthropic") return "@ai-sdk/anthropic";
+  if (format === "gemini_native") return "@ai-sdk/google";
+  return "@ai-sdk/openai-compatible";
+}
+
+/** Map Hermes `api_mode` → card format value. */
+export function hermesApiFormatFromMode(
+  mode: string | undefined,
+): ProviderQuickApiFormat {
+  const normalized = (mode || "").trim().toLowerCase();
+  if (
+    normalized === "codex_responses" ||
+    normalized === "openai_responses" ||
+    normalized === "responses"
+  ) {
+    return "openai_responses";
+  }
+  if (
+    normalized === "anthropic_messages" ||
+    normalized === "anthropic" ||
+    normalized === "messages"
+  ) {
+    return "anthropic";
+  }
+  // chat_completions, bedrock_converse, unknown → chat-compatible
+  return "openai_chat";
+}
+
+/** Map card format → Hermes `api_mode`. */
+export function hermesModeFromApiFormat(
+  format: ProviderQuickApiFormat,
+): string {
+  if (format === "openai_responses") return "codex_responses";
+  if (format === "anthropic") return "anthropic_messages";
+  // gemini_native not native to Hermes custom_providers — fall back to chat
+  return "chat_completions";
+}
+
 function asRecord(value: unknown): Record<string, any> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, any>)
@@ -78,14 +235,103 @@ function getConfigText(provider: Provider): string {
   return typeof config === "string" ? config : "";
 }
 
+function listOpenClawModelIds(provider: Provider): string[] {
+  const settings = asRecord(provider.settingsConfig);
+  const models = Array.isArray(settings.models) ? settings.models : [];
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of models) {
+    const id =
+      typeof entry === "string"
+        ? entry.trim()
+        : typeof asRecord(entry).id === "string"
+          ? String(asRecord(entry).id).trim()
+          : "";
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+function listOpenCodeModelIds(provider: Provider): string[] {
+  const settings = asRecord(provider.settingsConfig);
+  const models = asRecord(settings.models);
+  return Object.keys(models).filter((id) => id.trim().length > 0);
+}
+
+/** Hermes custom_providers models is an array like OpenClaw. */
+function listHermesModelIds(provider: Provider): string[] {
+  return listOpenClawModelIds(provider);
+}
+
 /**
  * Resolve the effective upstream format shown on the provider card.
  * Prefer explicit meta.apiFormat; fall back to app-native config hints.
+ *
+ * OpenClaw prefers native `settingsConfig.api` over meta (client protocol is
+ * the source of truth; meta is only kept as a portable mirror).
  */
 export function resolveProviderApiFormat(
   provider: Provider,
   appId: AppId,
 ): ProviderQuickApiFormat {
+  if (isOpenClawApp(appId)) {
+    const settings = asRecord(provider.settingsConfig);
+    const nativeApi =
+      typeof settings.api === "string" ? settings.api.trim() : "";
+    if (nativeApi) {
+      return openclawApiFormatFromProtocol(nativeApi);
+    }
+    const metaFormat = provider.meta?.apiFormat;
+    if (
+      metaFormat === "openai_chat" ||
+      metaFormat === "openai_responses" ||
+      metaFormat === "anthropic" ||
+      metaFormat === "gemini_native"
+    ) {
+      return metaFormat;
+    }
+    return "openai_chat";
+  }
+
+  if (isOpenCodeApp(appId)) {
+    const settings = asRecord(provider.settingsConfig);
+    const npm = typeof settings.npm === "string" ? settings.npm.trim() : "";
+    if (npm) {
+      return opencodeApiFormatFromNpm(npm);
+    }
+    const metaFormat = provider.meta?.apiFormat;
+    if (
+      metaFormat === "openai_chat" ||
+      metaFormat === "openai_responses" ||
+      metaFormat === "anthropic" ||
+      metaFormat === "gemini_native"
+    ) {
+      return metaFormat;
+    }
+    return "openai_chat";
+  }
+
+  if (isHermesApp(appId)) {
+    const settings = asRecord(provider.settingsConfig);
+    const mode =
+      typeof settings.api_mode === "string" ? settings.api_mode.trim() : "";
+    if (mode) {
+      return hermesApiFormatFromMode(mode);
+    }
+    const metaFormat = provider.meta?.apiFormat;
+    if (
+      metaFormat === "openai_chat" ||
+      metaFormat === "openai_responses" ||
+      metaFormat === "anthropic" ||
+      metaFormat === "gemini_native"
+    ) {
+      return metaFormat;
+    }
+    return "openai_chat";
+  }
+
   const metaFormat = provider.meta?.apiFormat;
   if (
     metaFormat === "openai_chat" ||
@@ -115,18 +361,28 @@ export function resolveProviderApiFormat(
     return grokApiFormatFromBackend(parsed.apiBackend);
   }
 
+  if (isGeminiApp(appId)) {
+    // Gemini CLI native wire format when meta is absent.
+    return "gemini_native";
+  }
+
   // Claude family defaults to Anthropic Messages.
   return "anthropic";
 }
 
 /**
  * Whether the provider likely needs local-proxy format conversion.
- * Direct Responses/Anthropic-native paths do not need the badge.
+ * Direct Responses/Anthropic-native/Gemini-native paths do not need the badge.
+ * OpenClaw has no local proxy takeover — never needs routing badge.
  */
 export function providerNeedsRouting(
   provider: Provider,
   appId: AppId,
 ): boolean {
+  if (isOpenClawApp(appId) || isOpenCodeApp(appId) || isHermesApp(appId)) {
+    return false;
+  }
+
   if (appId === "codex" || appId === "grokbuild") {
     const format = resolveProviderApiFormat(provider, appId);
     return format === "openai_chat" || format === "anthropic";
@@ -135,6 +391,11 @@ export function providerNeedsRouting(
   if (isClaudeFamilyApp(appId)) {
     const format = resolveProviderApiFormat(provider, appId);
     return Boolean(format && format !== "anthropic");
+  }
+
+  if (isGeminiApp(appId)) {
+    const format = resolveProviderApiFormat(provider, appId);
+    return Boolean(format && format !== "gemini_native");
   }
 
   return false;
@@ -148,6 +409,9 @@ export function providerNeedsRouting(
  * only describe the *upstream* wire format for proxy conversion — the client
  * side `api_backend` must stay `responses`, otherwise Grok hits a missing
  * `/chat/completions` route on the proxy and conversion never runs.
+ *
+ * OpenClaw writes native `settingsConfig.api` (client protocol) plus meta
+ * mirror; there is no proxy conversion layer.
  */
 export function applyProviderApiFormat(
   provider: Provider,
@@ -170,6 +434,24 @@ export function applyProviderApiFormat(
       // Client protocol to local proxy — always Responses.
       apiBackend: "responses",
     });
+    next.settingsConfig = settings;
+  }
+
+  if (isOpenClawApp(appId)) {
+    const settings = asRecord(next.settingsConfig);
+    settings.api = openclawProtocolFromApiFormat(format);
+    next.settingsConfig = settings;
+  }
+
+  if (isOpenCodeApp(appId)) {
+    const settings = asRecord(next.settingsConfig);
+    settings.npm = opencodeNpmFromApiFormat(format);
+    next.settingsConfig = settings;
+  }
+
+  if (isHermesApp(appId)) {
+    const settings = asRecord(next.settingsConfig);
+    settings.api_mode = hermesModeFromApiFormat(format);
     next.settingsConfig = settings;
   }
 
@@ -202,5 +484,46 @@ export function resolveProviderQuickModel(
     return (parsed.upstreamModel || parsed.model || "").trim();
   }
 
+  if (isGeminiApp(appId)) {
+    const env = asRecord(settings.env);
+    if (typeof env.GEMINI_MODEL === "string" && env.GEMINI_MODEL.trim()) {
+      return env.GEMINI_MODEL.trim();
+    }
+    if (typeof env.GOOGLE_MODEL === "string" && env.GOOGLE_MODEL.trim()) {
+      return env.GOOGLE_MODEL.trim();
+    }
+    return "";
+  }
+
+  if (isOpenClawApp(appId)) {
+    return listOpenClawModelIds(provider)[0] || "";
+  }
+
+  if (isOpenCodeApp(appId)) {
+    return listOpenCodeModelIds(provider)[0] || "";
+  }
+
+  if (isHermesApp(appId)) {
+    return listHermesModelIds(provider)[0] || "";
+  }
+
   return "";
+}
+
+/**
+ * Extra model ids already present in provider config (for card dropdown).
+ * OpenClaw/OpenCode/Hermes expose the full model list so users can pick without re-fetch.
+ */
+export function resolveProviderKnownModelIds(
+  provider: Provider,
+  appId: AppId,
+): string[] {
+  if (isOpenClawApp(appId) || isHermesApp(appId)) {
+    return listOpenClawModelIds(provider);
+  }
+  if (isOpenCodeApp(appId)) {
+    return listOpenCodeModelIds(provider);
+  }
+  const current = resolveProviderQuickModel(provider, appId);
+  return current ? [current] : [];
 }

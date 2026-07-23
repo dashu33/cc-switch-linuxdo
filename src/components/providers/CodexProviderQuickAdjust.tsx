@@ -28,8 +28,14 @@ import { resolveProviderModelsProbeTarget } from "@/utils/providerModelsProbe";
 import {
   applyProviderApiFormat,
   isClaudeFamilyApp,
+  isGeminiApp,
+  isHermesApp,
+  isOpenClawApp,
+  isOpenCodeApp,
   resolveProviderApiFormat,
+  resolveProviderKnownModelIds,
   resolveProviderQuickModel,
+  usesDirectUpstreamFormat,
   type ProviderQuickApiFormat,
 } from "@/utils/providerQuickAdjust";
 import { Button } from "@/components/ui/button";
@@ -369,6 +375,11 @@ export function CodexProviderQuickAdjust({
     t,
   ]);
 
+  const knownConfigModelIds = useMemo(
+    () => resolveProviderKnownModelIds(provider, appId),
+    [appId, provider],
+  );
+
   const selectableModelIds = useMemo(() => {
     const ids: string[] = [];
     const seen = new Set<string>();
@@ -378,6 +389,8 @@ export function CodexProviderQuickAdjust({
       seen.add(id);
       ids.push(id);
     };
+    // Prefer already-configured models first (OpenClaw models[] primary list).
+    for (const id of knownConfigModelIds) push(id);
     for (const model of fetchedModels) push(model.id);
     for (const id of modelOptions) push(id);
     for (const brand of modelBrandIcons) {
@@ -386,7 +399,19 @@ export function CodexProviderQuickAdjust({
     }
     push(currentModel);
     return ids;
-  }, [currentModel, fetchedModels, modelBrandIcons, modelOptions]);
+  }, [
+    currentModel,
+    fetchedModels,
+    knownConfigModelIds,
+    modelBrandIcons,
+    modelOptions,
+  ]);
+
+  const directUpstream = usesDirectUpstreamFormat(appId);
+  const openclawFamily = isOpenClawApp(appId);
+  const opencodeFamily = isOpenCodeApp(appId);
+  const hermesFamily = isHermesApp(appId);
+  const geminiFamily = isGeminiApp(appId);
 
   return (
     <div
@@ -402,9 +427,15 @@ export function CodexProviderQuickAdjust({
         <div className="flex min-w-0 flex-col gap-1">
           <div className="flex min-w-0 items-center gap-1.5">
             <span className="shrink-0 text-[11px] text-muted-foreground">
-              {t("codexConfig.upstreamFormatLabel", {
-                defaultValue: "上游格式",
-              })}
+              {openclawFamily
+                ? t("openclaw.apiProtocol", { defaultValue: "API 协议" })
+                : hermesFamily
+                  ? t("hermes.form.apiMode", { defaultValue: "API 模式" })
+                  : opencodeFamily
+                    ? t("opencode.npmPackage", { defaultValue: "SDK 包" })
+                    : t("codexConfig.upstreamFormatLabel", {
+                        defaultValue: "上游格式",
+                      })}
             </span>
             <Select
               value={currentFormat}
@@ -435,6 +466,93 @@ export function CodexProviderQuickAdjust({
                     <SelectItem value="gemini_native">
                       {t("providerForm.apiFormatGeminiNative", {
                         defaultValue: "Gemini Native（需开启路由）",
+                      })}
+                    </SelectItem>
+                  </>
+                ) : geminiFamily ? (
+                  <>
+                    <SelectItem value="gemini_native">
+                      {t("providerForm.apiFormatGeminiNativeNative", {
+                        defaultValue: "Gemini Native（原生）",
+                      })}
+                    </SelectItem>
+                    <SelectItem value="openai_chat">
+                      {t("providerForm.apiFormatOpenAIChat", {
+                        defaultValue: "OpenAI Chat Completions（需开启路由）",
+                      })}
+                    </SelectItem>
+                    <SelectItem value="openai_responses">
+                      {t("providerForm.apiFormatOpenAIResponses", {
+                        defaultValue: "OpenAI Responses（需开启路由）",
+                      })}
+                    </SelectItem>
+                    <SelectItem value="anthropic">
+                      {t("providerForm.apiFormatAnthropicRouted", {
+                        defaultValue: "Anthropic Messages（需开启路由）",
+                      })}
+                    </SelectItem>
+                  </>
+                ) : hermesFamily ? (
+                  <>
+                    <SelectItem value="openai_chat">
+                      {t("hermes.form.apiModeChatCompletions", {
+                        defaultValue: "Chat Completions",
+                      })}
+                    </SelectItem>
+                    <SelectItem value="openai_responses">
+                      {t("hermes.form.apiModeCodexResponses", {
+                        defaultValue: "Codex Responses",
+                      })}
+                    </SelectItem>
+                    <SelectItem value="anthropic">
+                      {t("hermes.form.apiModeAnthropicMessages", {
+                        defaultValue: "Anthropic Messages",
+                      })}
+                    </SelectItem>
+                  </>
+                ) : opencodeFamily ? (
+                  <>
+                    <SelectItem value="openai_chat">
+                      {t("opencode.npmOpenaiCompatible", {
+                        defaultValue: "OpenAI Compatible",
+                      })}
+                    </SelectItem>
+                    <SelectItem value="openai_responses">
+                      {t("opencode.npmOpenai", {
+                        defaultValue: "OpenAI Responses",
+                      })}
+                    </SelectItem>
+                    <SelectItem value="anthropic">
+                      {t("opencode.npmAnthropic", {
+                        defaultValue: "Anthropic",
+                      })}
+                    </SelectItem>
+                    <SelectItem value="gemini_native">
+                      {t("opencode.npmGoogle", {
+                        defaultValue: "Google (Gemini)",
+                      })}
+                    </SelectItem>
+                  </>
+                ) : openclawFamily || directUpstream ? (
+                  <>
+                    <SelectItem value="openai_chat">
+                      {t("openclaw.protocolOpenaiCompletions", {
+                        defaultValue: "OpenAI Completions",
+                      })}
+                    </SelectItem>
+                    <SelectItem value="openai_responses">
+                      {t("openclaw.protocolOpenaiResponses", {
+                        defaultValue: "OpenAI Responses",
+                      })}
+                    </SelectItem>
+                    <SelectItem value="anthropic">
+                      {t("openclaw.protocolAnthropicMessages", {
+                        defaultValue: "Anthropic Messages",
+                      })}
+                    </SelectItem>
+                    <SelectItem value="gemini_native">
+                      {t("openclaw.protocolGoogleGenerativeAi", {
+                        defaultValue: "Google Generative AI",
                       })}
                     </SelectItem>
                   </>
