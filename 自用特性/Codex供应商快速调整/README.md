@@ -67,6 +67,7 @@
 - `fetchModelsForConfig(baseUrl, apiKey, isFullUrl, undefined, customUserAgent)`
 - Key：`auth.OPENAI_API_KEY` 或 experimental bearer
 - 选择模型 → `setCodexModelName` 写 TOML 顶层 `model`
+- 模型下拉严格只展示本次成功 `/models` 返回的模型；不会混入历史探测、预置品牌或已配置模型。切换凭据、空结果或拉取失败后清空本次候选。
 
 ### 本地 `fetchStatus`
 

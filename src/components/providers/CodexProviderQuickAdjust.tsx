@@ -33,7 +33,6 @@ import {
   isOpenClawApp,
   isOpenCodeApp,
   resolveProviderApiFormat,
-  resolveProviderKnownModelIds,
   resolveProviderQuickModel,
   usesDirectUpstreamFormat,
   type ProviderQuickApiFormat,
@@ -68,8 +67,6 @@ interface CodexProviderQuickAdjustProps {
   }) => void;
   /** 探测到的模型 brand LOGO，显示在当前模型选择框下方 */
   modelBrandIcons?: ModelBrandIcon[];
-  /** 探测历史中的模型 id（用于下拉选项，无需本会话重新获取） */
-  modelOptions?: string[];
   onSelectBrandModel?: (modelId: string) => void;
   /**
    * 渲染在「上游格式」控件正下方（与模型图标同一水平带）。
@@ -131,7 +128,6 @@ export function CodexProviderQuickAdjust({
   modelsProbeReason,
   onProbeResult,
   modelBrandIcons = [],
-  modelOptions = [],
   onSelectBrandModel,
   belowUpstream,
 }: CodexProviderQuickAdjustProps) {
@@ -375,37 +371,17 @@ export function CodexProviderQuickAdjust({
     t,
   ]);
 
-  const knownConfigModelIds = useMemo(
-    () => resolveProviderKnownModelIds(provider, appId),
-    [appId, provider],
-  );
-
   const selectableModelIds = useMemo(() => {
     const ids: string[] = [];
     const seen = new Set<string>();
-    const push = (raw?: string) => {
-      const id = raw?.trim();
-      if (!id || seen.has(id)) return;
+    for (const model of fetchedModels) {
+      const id = model.id.trim();
+      if (!id || seen.has(id)) continue;
       seen.add(id);
       ids.push(id);
-    };
-    // Prefer already-configured models first (OpenClaw models[] primary list).
-    for (const id of knownConfigModelIds) push(id);
-    for (const model of fetchedModels) push(model.id);
-    for (const id of modelOptions) push(id);
-    for (const brand of modelBrandIcons) {
-      push(brand.modelId);
-      for (const id of brand.modelIds ?? []) push(id);
     }
-    push(currentModel);
     return ids;
-  }, [
-    currentModel,
-    fetchedModels,
-    knownConfigModelIds,
-    modelBrandIcons,
-    modelOptions,
-  ]);
+  }, [fetchedModels]);
 
   const directUpstream = usesDirectUpstreamFormat(appId);
   const openclawFamily = isOpenClawApp(appId);

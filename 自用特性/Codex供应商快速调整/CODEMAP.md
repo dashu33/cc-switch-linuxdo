@@ -6,7 +6,8 @@
 
 | 文件 | 角色 |
 |------|------|
-| `src/components/providers/CodexProviderQuickAdjust.tsx` | UI + 格式/模型/获取状态色 + 失败原因旁显 |
+| `src/components/providers/CodexProviderQuickAdjust.tsx` | UI + 格式/模型/获取状态色 + 失败原因旁显；模型候选严格来自本次 `/models` 返回 |
+| `src/components/providers/forms/CodexFormFields.tsx` | 编辑表单默认模型下拉；候选严格来自本次 `/models` 返回 |
 | `src/components/providers/ProviderCard.tsx` | `supportsProviderQuickAdjust` + **排除 Hermes 只读**；传 `onUpdate` + probe 状态 |
 | `src/utils/providerQuickAdjust.ts` | 全局：八端门控、OpenClaw/OpenCode/Hermes 协议映射、Gemini 默认、需路由、模型读取 |
 | `src/utils/applyProviderModel.ts` | 模型写回：Codex/Claude/Gemini/Grok/OpenClaw/OpenCode/**Hermes** |

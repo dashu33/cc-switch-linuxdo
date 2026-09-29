@@ -360,28 +360,16 @@ export function CodexFormFields({
     setCatalogRows((current) => current.filter((_, i) => i !== index));
   }, []);
 
-  // 默认模型下拉建议 = 模型映射的"实际请求模型"列 ∪ 拉取到的 /models 列表
+  // 默认模型下拉建议严格来自本次成功拉取的 /models 列表。
   const defaultModelSuggestions = useMemo<FetchedModel[]>(() => {
     const seen = new Set<string>();
-    const suggestions: FetchedModel[] = [];
-    for (const row of catalogRows) {
-      const id = row.model.trim();
-      if (!id || seen.has(id)) continue;
+    return fetchedModels.filter((model) => {
+      const id = model.id.trim();
+      if (!id || seen.has(id)) return false;
       seen.add(id);
-      suggestions.push({
-        id,
-        ownedBy: t("codexConfig.modelMappingTitle", {
-          defaultValue: "模型映射",
-        }),
-      });
-    }
-    for (const model of fetchedModels) {
-      if (seen.has(model.id)) continue;
-      seen.add(model.id);
-      suggestions.push(model);
-    }
-    return suggestions;
-  }, [catalogRows, fetchedModels, t]);
+      return true;
+    });
+  }, [fetchedModels]);
 
   // 填了映射时才提示"默认模型不在映射中"（无映射的供应商本来就直接请求任意模型名）
   const trimmedDefaultModel = codexModel.trim();

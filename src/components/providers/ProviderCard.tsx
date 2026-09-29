@@ -1057,7 +1057,6 @@ export function ProviderCard({
                 modelsProbeReason={modelsProbeReason}
                 onProbeResult={onModelsProbeResult}
                 modelBrandIcons={modelLogoPack.icons}
-                modelOptions={modelsProbeModelIds}
                 onSelectBrandModel={(modelId) => {
                   const next = applyProviderModel(provider, appId, modelId);
                   if (next) void Promise.resolve(onUpdate(next));

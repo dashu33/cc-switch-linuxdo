@@ -20,7 +20,7 @@
 | 供应商收藏                 | [供应商收藏](./供应商收藏/)                     | 已落地 | 卡片左上角收藏；按应用持久化并支持「仅收藏」组合筛选             | 否                          |
 | NewAPI 快速导入             | [NewAPI快速导入](./NewAPI快速导入/)                         | 已落地 | 剪贴板 URL+Key 直接创建并同步全部八个模型客户端，支持半量等待与 Base64 Key | **是** |
 | OpenClaw 同步模型与密钥保护 | [OpenClaw同步模型与密钥保护](./OpenClaw同步模型与密钥保护/) | 已落地 | NewAPI/同步默认 grok-4.5；脏 key 不覆盖；切换写 defaults.model | **是** |
-| Codex 系供应商快速调整 | [Codex供应商快速调整](./Codex供应商快速调整/)               | 已落地 | 八端卡片就地改格式/协议与模型（含 OpenClaw/Gemini/OpenCode/**Hermes**；Hermes dict 只读除外） | 否                          |
+| Codex 系供应商快速调整 | [Codex供应商快速调整](./Codex供应商快速调整/)               | 已落地 | 八端卡片就地改格式/协议与模型；模型下拉严格使用本次 `/models` 结果（含 OpenClaw/Gemini/OpenCode/**Hermes**；Hermes dict 只读除外） | 否                          |
 | 跨应用复制供应商            | [跨应用复制供应商](./跨应用复制供应商/)                     | 已落地 | 将可移植凭证转换并复制到其他应用                                 | 否                          |
 | GrokBuild 供应商对齐 Codex | [GrokBuild供应商对齐Codex](./GrokBuild供应商对齐Codex/) | 已落地 | 卡片快捷/需路由/拉模型对齐 Codex；代理补齐 Responses usage/error/sequence_number | **是** |
 | 供应商卡片本地用量与可用性  | [供应商卡片本地用量与可用性](./供应商卡片本地用量与可用性/) | 已落地 | 展示成功率、延迟、首字和最近调用（含 OpenClaw 会话导入）                                 | **是**（部分统计字段）      |
