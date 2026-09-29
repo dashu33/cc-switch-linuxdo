@@ -20,6 +20,7 @@
 | `src/types.ts` | `CodexApiFormat`、`OpenClawModel`、`meta.apiFormat` |
 | `src/config/openclawProviderPresets.ts` | `openclawApiProtocols`（文案/协议参考） |
 | `src/i18n/locales/*` | `codexConfig.quick*` / `openclaw.apiProtocol*` |
+| `src-tauri/src/resources/codex_native_responses_template.json` | Codex native catalog 模板；提供 `low` / `medium` / `high` / `xhigh` 思考档位，默认 `medium` |
 | `自用特性/Codex供应商快速调整/*` | 本文档 |
 
 ## 关键接线
@@ -98,4 +99,5 @@ settings.api = openclawProtocolFromApiFormat(format); // + meta.apiFormat 镜像
 
 ```powershell
 pnpm exec vitest run src/utils/providerQuickAdjust.test.ts tests/components/ProviderCardLayout.test.ts
+cargo test --manifest-path src-tauri/Cargo.toml codex_config::tests::native_responses_profile_suppresses_apply_patch_and_keeps_shell
 ```

@@ -89,6 +89,12 @@
 
 拉取 `/models` 只更新当前编辑会话的候选列表。用户确认后点击“同步拉取结果”，新增模型才会进入模型映射；映射由现有保存流程生成 `cc-switch-model-catalog.json`，供 Codex App 的 `/model` 菜单读取。同步使用追加模式，不会清理旧映射。
 
+### Codex 思考程度
+
+- 同步进入 Codex catalog 的中转站模型会继承通用 reasoning 档位：`low`、`medium`、`high`、`xhigh`。默认值为 `medium`。
+- `/models` 接口通常只返回模型 ID，不提供每个模型的 reasoning 能力元数据，因此这些档位是面向中转站的兼容默认值。
+- Codex App 会据此显示思考程度选择器；实际中转站是否接受某个档位，仍由其 API 行为决定。
+
 ### 与批量探测同步
 
 prop：`modelsProbeStatus` / `modelsProbeHistoryStatus` / `modelsProbeReason`  

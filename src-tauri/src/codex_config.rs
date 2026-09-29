@@ -2816,6 +2816,23 @@ base_url = "https://production.api/v1"
             entry.get("context_window").and_then(|v| v.as_u64()),
             Some(1_000_000)
         );
+        assert_eq!(
+            entry.get("default_reasoning_level").and_then(|v| v.as_str()),
+            Some("medium"),
+            "native entries should default to a selectable middle reasoning level"
+        );
+        let reasoning_levels = entry
+            .get("supported_reasoning_levels")
+            .and_then(|value| value.as_array())
+            .expect("native entries should expose supported reasoning levels");
+        for effort in ["low", "medium", "high", "xhigh"] {
+            assert!(
+                reasoning_levels.iter().any(|level| {
+                    level.get("effort").and_then(|value| value.as_str()) == Some(effort)
+                }),
+                "native entries should expose the {effort} reasoning level"
+            );
+        }
     }
 
     #[test]
