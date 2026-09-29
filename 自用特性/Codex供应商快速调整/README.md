@@ -68,6 +68,7 @@
 - Key：`auth.OPENAI_API_KEY` 或 experimental bearer
 - 选择模型 → `setCodexModelName` 写 TOML 顶层 `model`
 - 模型下拉严格只展示本次成功 `/models` 返回的模型；不会混入历史探测、预置品牌或已配置模型。切换凭据、空结果或拉取失败后清空本次候选。
+- 编辑表单中的“同步拉取结果”会把本次返回且尚未存在的模型追加到 Codex 模型映射；已有映射及其手工字段保留，不会自动覆盖或删除。保存供应商后才会生成 Codex catalog。
 
 ### 本地 `fetchStatus`
 
@@ -83,6 +84,10 @@
 
 - 切换 `provider.id` 重置本地瞬时态；失败原因从 history 回灌
 - 不按供应商持久化模型列表（刷新需重拉）
+
+### 拉取结果与 Codex 菜单
+
+拉取 `/models` 只更新当前编辑会话的候选列表。用户确认后点击“同步拉取结果”，新增模型才会进入模型映射；映射由现有保存流程生成 `cc-switch-model-catalog.json`，供 Codex App 的 `/model` 菜单读取。同步使用追加模式，不会清理旧映射。
 
 ### 与批量探测同步
 

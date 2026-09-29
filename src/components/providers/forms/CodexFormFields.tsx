@@ -22,6 +22,7 @@ import {
   ChevronRight,
   Download,
   Loader2,
+  ListPlus,
   Plus,
   Trash2,
 } from "lucide-react";
@@ -346,6 +347,37 @@ export function CodexFormFields({
     if (!onCatalogModelsChange) return;
     setCatalogRows((current) => [...current, createCatalogRow()]);
   }, [onCatalogModelsChange]);
+
+  const handleSyncFetchedModelsToCatalog = useCallback(() => {
+    if (!onCatalogModelsChange || fetchedModels.length === 0) return;
+    const fetchedIds = Array.from(
+      new Set(
+        fetchedModels
+          .map((model) => model.id.trim())
+          .filter((id) => id.length > 0),
+      ),
+    );
+    const existing = new Set(
+      catalogRows.map((row) => row.model.trim()).filter((id) => id.length > 0),
+    );
+    const additions = fetchedIds
+      .filter((id) => !existing.has(id))
+      .map((id) => createCatalogRow({ model: id, displayName: id }));
+    const addedCount = additions.length;
+    if (addedCount > 0) {
+      setCatalogRows((current) => [...current, ...additions]);
+    }
+    toast.success(
+      addedCount > 0
+        ? t("codexConfig.syncFetchedModelsSuccess", {
+            count: addedCount,
+            defaultValue: `已添加 ${addedCount} 个模型到 Codex 菜单映射`,
+          })
+        : t("codexConfig.syncFetchedModelsNone", {
+            defaultValue: "拉取的模型已经在 Codex 菜单映射中",
+          }),
+    );
+  }, [catalogRows, fetchedModels, onCatalogModelsChange, t]);
 
   const handleUpdateCatalogRow = useCallback(
     (index: number, patch: Partial<CodexCatalogModel>) => {
@@ -837,12 +869,31 @@ export function CodexFormFields({
                         defaultValue: "模型映射",
                       })}
                     </FormLabel>
-                    {renderCatalogActionButtons(
-                      handleAddCatalogRow,
-                      t("codexConfig.addCatalogModel", {
-                        defaultValue: "添加模型",
-                      }),
-                    )}
+                    <div className="flex flex-wrap items-center justify-end gap-1">
+                      {fetchedModels.length > 0 && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleSyncFetchedModelsToCatalog}
+                          className="h-7 gap-1"
+                          title={t("codexConfig.syncFetchedModelsHint", {
+                            defaultValue: "将本次拉取的模型追加到 Codex 菜单映射",
+                          })}
+                        >
+                          <ListPlus className="h-3.5 w-3.5" />
+                          {t("codexConfig.syncFetchedModels", {
+                            defaultValue: "同步拉取结果",
+                          })}
+                        </Button>
+                      )}
+                      {renderCatalogActionButtons(
+                        handleAddCatalogRow,
+                        t("codexConfig.addCatalogModel", {
+                          defaultValue: "添加模型",
+                        }),
+                      )}
+                    </div>
                   </div>
                   <p className="text-xs leading-relaxed text-muted-foreground">
                     {t("codexConfig.modelMappingHint", {

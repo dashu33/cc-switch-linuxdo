@@ -7,7 +7,7 @@
 | 文件 | 角色 |
 |------|------|
 | `src/components/providers/CodexProviderQuickAdjust.tsx` | UI + 格式/模型/获取状态色 + 失败原因旁显；模型候选严格来自本次 `/models` 返回 |
-| `src/components/providers/forms/CodexFormFields.tsx` | 编辑表单默认模型下拉；候选严格来自本次 `/models` 返回 |
+| `src/components/providers/forms/CodexFormFields.tsx` | 编辑表单默认模型下拉；候选严格来自本次 `/models` 返回；可将本次结果追加到 Codex 模型映射 |
 | `src/components/providers/ProviderCard.tsx` | `supportsProviderQuickAdjust` + **排除 Hermes 只读**；传 `onUpdate` + probe 状态 |
 | `src/utils/providerQuickAdjust.ts` | 全局：八端门控、OpenClaw/OpenCode/Hermes 协议映射、Gemini 默认、需路由、模型读取 |
 | `src/utils/applyProviderModel.ts` | 模型写回：Codex/Claude/Gemini/Grok/OpenClaw/OpenCode/**Hermes** |
@@ -47,6 +47,7 @@ rg -n "CodexProviderQuickAdjust|modelsProbeStatus|fetchStatus|fetchButtonClassNa
 | `handleFormatChange` | `applyProviderApiFormat` |
 | `handleModelChange` | `applyProviderModel` |
 | `handleFetchModels` | 拉模型 + `fetchStatus` |
+| `handleSyncFetchedModelsToCatalog` | 将本次拉取且尚未存在的模型追加到模型映射，保留既有字段 |
 | `fetchButtonClassName` | 按钮配色 |
 | `fetchStatusLabel` | 按钮文案 |
 | `fetchFailureReason` / `fetchFailureReasonLabel` | 失败原因本地态与右侧文案 |
