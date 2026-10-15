@@ -29,6 +29,7 @@ import {
   ChevronDown,
   ChevronRight,
   Download,
+  ListPlus,
   Loader2,
   Wand2,
 } from "lucide-react";
@@ -252,6 +253,15 @@ export function ClaudeFormFields({
   // 通用模型获取（非 Copilot 供应商）
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+  // 拉取请求序号：请求身份（Base URL / 完整地址开关 / API Key / 自定义 UA）
+  // 一变即自增，清空旧列表并作废在途响应——/models 结果可能按 Key 的模型
+  // 授权返回，换号后残留旧列表会误导选择
+  const fetchModelsSeqRef = useRef(0);
+
+  useEffect(() => {
+    fetchModelsSeqRef.current += 1;
+    setFetchedModels((prev) => (prev.length === 0 ? prev : []));
+  }, [baseUrl, isFullUrl, apiKey, customUserAgent]);
 
   const showModelFetchResult = useCallback(
     (count: number) => {
@@ -280,13 +290,16 @@ export function ClaudeFormFields({
     });
     const modelsUrl = matchedPreset?.modelsUrl;
 
+    const seq = ++fetchModelsSeqRef.current;
     setIsFetchingModels(true);
     fetchModelsForConfig(baseUrl, apiKey, isFullUrl, modelsUrl, customUserAgent)
       .then((models) => {
+        if (seq !== fetchModelsSeqRef.current) return;
         setFetchedModels(models);
         showModelFetchResult(models.length);
       })
       .catch((err) => {
+        if (seq !== fetchModelsSeqRef.current) return;
         console.warn("[ModelFetch] Failed:", err);
         showFetchModelsError(err, t);
       })
@@ -599,6 +612,48 @@ export function ClaudeFormFields({
     handleRoleModelChange(row, setClaudeOneMMarker(row.model, enabled));
   };
 
+  // 把本次拉取的 /models 结果按角色关键词落到模型映射：
+  // sonnet / opus / fable / haiku 各取第一个命中该关键词的模型；
+  // Subagent 没有对应品牌模型，沿用当前兜底模型（ANTHROPIC_MODEL）。
+  // 未命中或兜底为空的角色保持原值，不覆盖用户已填内容。
+  const handleSyncFetchedModelsToRoles = () => {
+    const fetchedIds = Array.from(
+      new Set(
+        fetchedModels
+          .map((model) => stripClaudeOneMMarker(model.id).trim())
+          .filter((id) => id.length > 0),
+      ),
+    );
+    if (fetchedIds.length === 0) return;
+
+    const fallbackModel = stripClaudeOneMMarker(claudeModel).trim();
+    let applied = 0;
+    for (const row of modelRoleRows) {
+      const match =
+        row.role === "subagent"
+          ? fallbackModel
+          : fetchedIds.find((id) => id.toLowerCase().includes(row.role));
+      if (!match) continue;
+      handleRoleModelChange(row, match);
+      applied += 1;
+    }
+
+    if (applied > 0) {
+      toast.success(
+        t("providerForm.syncFetchedModelsSuccess", {
+          count: applied,
+          defaultValue: "已按角色填入 {{count}} 个模型",
+        }),
+      );
+    } else {
+      toast.info(
+        t("providerForm.syncFetchedModelsNone", {
+          defaultValue: "拉取结果没有可匹配的角色模型，请手动选择",
+        }),
+      );
+    }
+  };
+
   return (
     <>
       {/* GitHub Copilot OAuth 认证 */}
@@ -818,6 +873,25 @@ export function ClaudeFormFields({
               <div className="flex items-center justify-between">
                 <FormLabel>{t("providerForm.modelMappingLabel")}</FormLabel>
                 <div className="flex gap-2">
+                  {/* 同步拉取结果：仅在本次拉取成功后出现，按角色关键词自动落位 */}
+                  {fetchedModels.length > 0 && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleSyncFetchedModelsToRoles}
+                      className="h-7 gap-1"
+                      title={t("providerForm.syncFetchedModelsHint", {
+                        defaultValue:
+                          "把本次拉取的模型按角色名（sonnet/opus/fable/haiku）自动填入模型映射",
+                      })}
+                    >
+                      <ListPlus className="h-3.5 w-3.5" />
+                      {t("providerForm.syncFetchedModels", {
+                        defaultValue: "同步拉取结果",
+                      })}
+                    </Button>
+                  )}
                   {/* 一键设置按钮 */}
                   <Button
                     type="button"

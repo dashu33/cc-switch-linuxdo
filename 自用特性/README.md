@@ -21,6 +21,7 @@
 | NewAPI 快速导入             | [NewAPI快速导入](./NewAPI快速导入/)                         | 已落地 | 剪贴板 URL+Key 直接创建并同步全部八个模型客户端，支持半量等待与 Base64 Key | **是** |
 | OpenClaw 同步模型与密钥保护 | [OpenClaw同步模型与密钥保护](./OpenClaw同步模型与密钥保护/) | 已落地 | NewAPI/同步默认 grok-4.5；脏 key 不覆盖；切换写 defaults.model | **是** |
 | Codex 系供应商快速调整 | [Codex供应商快速调整](./Codex供应商快速调整/)               | 已落地 | 八端卡片就地改格式/协议与模型；模型下拉严格使用本次 `/models` 结果（含 OpenClaw/Gemini/OpenCode/**Hermes**；Hermes dict 只读除外） | 否                          |
+| Claude 模型映射批量设置 | [Claude模型映射批量设置](./Claude模型映射批量设置/)       | 已落地 | 弹窗模型映射区对齐 Codex：拉取序号作废 + 「同步拉取结果」按角色关键词自动落位 | 否                          |
 | 跨应用复制供应商            | [跨应用复制供应商](./跨应用复制供应商/)                     | 已落地 | 将可移植凭证转换并复制到其他应用                                 | 否                          |
 | GrokBuild 供应商对齐 Codex | [GrokBuild供应商对齐Codex](./GrokBuild供应商对齐Codex/) | 已落地 | 卡片快捷/需路由/拉模型对齐 Codex；代理补齐 Responses usage/error/sequence_number | **是** |
 | 供应商卡片本地用量与可用性  | [供应商卡片本地用量与可用性](./供应商卡片本地用量与可用性/) | 已落地 | 展示成功率、延迟、首字和最近调用（含 OpenClaw 会话导入）                                 | **是**（部分统计字段）      |
@@ -28,7 +29,7 @@
 | 快速定位当前供应商          | [快速定位当前供应商](./快速定位当前供应商/)                 | 已落地 | 子菜单准星按钮滚动到使用中供应商并高亮                           | 否                          |
 | 供应商列表滚动条            | [供应商列表滚动条](./供应商列表滚动条/)                     | 已落地 | Provider 页显示细滚动条                                          | 否                          |
 | 供应商名称行内编辑          | [供应商名称行内编辑](./供应商名称行内编辑/)                 | 已落地 | 卡片内直接改名，支持 Enter/Esc                                   | 否                          |
-| 新建供应商默认 openai_chat  | [新建供应商默认openai_chat](./新建供应商默认openai_chat/)   | 已落地 | NewAPI/网关新建时默认 Chat Completions                           | 否（Rust 会同步补全已有项） |
+| 新建供应商默认 openai_chat  | [新建供应商默认openai_chat](./新建供应商默认openai_chat/)   | 已落地 | NewAPI/网关新建时 Codex 默认 Chat Completions；**Claude/Desktop 落 anthropic**，子供应商手改值不被重新同步覆盖 | **是** |
 | 用量日聚合同步              | [用量日聚合同步](./用量日聚合同步/)                         | 已落地 | WebDAV/S3 同步 `usage_daily_rollups`，明细日志仍留本机           | **是**                      |
 | S3 工具栏快捷同步           | [S3工具栏快捷同步](./S3工具栏快捷同步/)                     | 已落地 | Provider 子菜单一键上传/下载                                     | 否                          |
 | 主窗口唤回前置              | [主窗口唤回前置](./主窗口唤回前置/)                     | 已落地 | Windows 托盘/二次启动强制前置，避免被挡后只能点任务栏   | **是**                      |
