@@ -225,7 +225,11 @@ describe("providerQuickAdjust global framework", () => {
     );
     expect(google.settingsConfig.npm).toBe("@ai-sdk/google");
 
-    const promoted = applyProviderModel(provider, "opencode", "claude-sonnet-5");
+    const promoted = applyProviderModel(
+      provider,
+      "opencode",
+      "claude-sonnet-5",
+    );
     expect(promoted).not.toBeNull();
     expect(Object.keys(promoted!.settingsConfig.models)).toEqual([
       "claude-sonnet-5",
@@ -276,11 +280,7 @@ describe("providerQuickAdjust global framework", () => {
     const gemini = applyProviderApiFormat(provider, "hermes", "gemini_native");
     expect(gemini.settingsConfig.api_mode).toBe("chat_completions");
 
-    const promoted = applyProviderModel(
-      provider,
-      "hermes",
-      "claude-sonnet-5",
-    );
+    const promoted = applyProviderModel(provider, "hermes", "claude-sonnet-5");
     expect(promoted).not.toBeNull();
     expect(promoted!.settingsConfig.models[0].id).toBe("claude-sonnet-5");
     expect(promoted!.settingsConfig.models[1].id).toBe("gpt-5.5");
@@ -326,5 +326,27 @@ describe("providerQuickAdjust global framework", () => {
       "gpt-5.5",
       "claude-sonnet-5",
     ]);
+  });
+
+  it("marks card-level Claude format changes as explicit user choice", () => {
+    const provider: Provider = {
+      id: "claude-1",
+      name: "Claude Gateway",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.example.com",
+          ANTHROPIC_AUTH_TOKEN: "sk-claude",
+        },
+      },
+      meta: { apiFormat: "anthropic" },
+    };
+
+    const next = applyProviderApiFormat(provider, "claude", "openai_chat");
+    expect(next.meta?.apiFormat).toBe("openai_chat");
+    // 标记为显式选择，重新同步统一供应商时保留
+    expect(next.meta?.apiFormatExplicit).toBe(true);
+    expect(resolveProviderApiFormat(next, "claude")).toBe("openai_chat");
+    // 原对象不被就地修改
+    expect(provider.meta?.apiFormatExplicit).toBeUndefined();
   });
 });

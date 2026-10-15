@@ -484,9 +484,13 @@ function ProviderFormFull({
     if (appId !== "claude") return "anthropic";
     return initialData?.meta?.apiFormat ?? "anthropic";
   });
+  // 用户是否在本表单里改过上游协议：置位后写入 meta.apiFormatExplicit，
+  // 重新同步统一供应商时保留该选择，不被创建时的默认值冲掉
+  const [apiFormatTouched, setApiFormatTouched] = useState(false);
 
   const handleApiFormatChange = useCallback((format: ClaudeApiFormat) => {
     setLocalApiFormat(format);
+    setApiFormatTouched(true);
   }, []);
 
   const handleApiKeyFieldChange = useCallback(
@@ -1526,6 +1530,10 @@ function ProviderFormFull({
           : appId === "codex" && category !== "official"
             ? localCodexApiFormat
             : undefined,
+      apiFormatExplicit:
+        appId === "claude" && apiFormatTouched
+          ? true
+          : initialData?.meta?.apiFormatExplicit,
       apiKeyField:
         appId === "claude" &&
         category !== "official" &&

@@ -445,6 +445,13 @@ pub struct ProviderMeta {
     /// - "openai_responses": OpenAI Responses API 格式，需要转换
     #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
     pub api_format: Option<String>,
+    /// 用户是否显式改过上游协议（卡片下拉 / 编辑表单）。
+    /// 重新同步统一供应商时保留子供应商的该值，避免冲掉用户选择。
+    #[serde(
+        rename = "apiFormatExplicit",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub api_format_explicit: Option<bool>,
     /// 通用认证绑定（provider_config / managed_account）
     ///
     /// 新代码应只写入该字段；githubAccountId 仅保留兼容读取。
@@ -802,6 +809,24 @@ fn openclaw_api_from_meta_and_model(
     }
 }
 
+/// 由统一供应商的 meta 派生 Claude 子供应商的 meta。
+///
+/// 统一供应商上的 `apiFormat` 默认值（NewAPI / 自定义网关预设写入的
+/// `openai_chat`）是为 Codex 侧准备的；Claude 与 NewAPI 网关上通常直接说
+/// Anthropic Messages，继承过来会让卡片显示「Chat Completions（需开启路由）」。
+/// 因此这里把空值与该默认值一律归一到 `anthropic`，其余显式值原样保留。
+/// 派生出的默认值不标记 `apiFormatExplicit`，用户手动改过的值由
+/// `sync_universal_child` 单独保留。
+fn claude_meta_from_universal(source: Option<&ProviderMeta>) -> ProviderMeta {
+    let mut meta = source.cloned().unwrap_or_default();
+    let inherited = meta.api_format.as_deref().unwrap_or("").trim();
+    if inherited.is_empty() || inherited == "openai_chat" {
+        meta.api_format = Some("anthropic".to_string());
+    }
+    meta.api_format_explicit = None;
+    meta
+}
+
 impl UniversalProvider {
     fn strip_trailing_path_suffix(base_url: &str, suffixes: &[&str]) -> String {
         let trimmed = base_url.trim().trim_end_matches('/');
@@ -904,7 +929,7 @@ impl UniversalProvider {
             created_at: self.created_at,
             sort_index: self.sort_index,
             notes: self.notes.clone(),
-            meta: self.meta.clone(),
+            meta: Some(claude_meta_from_universal(self.meta.as_ref())),
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
@@ -1069,7 +1094,7 @@ requires_openai_auth = true"#
             .and_then(|m| m.haiku_model.clone())
             .unwrap_or_else(|| main_model.clone());
 
-        let mut meta = self.meta.clone().unwrap_or_default();
+        let mut meta = claude_meta_from_universal(self.meta.as_ref());
         meta.claude_desktop_mode = Some(ClaudeDesktopMode::Proxy);
         meta.claude_desktop_model_routes = HashMap::from([
             (
@@ -1574,6 +1599,47 @@ mod tests {
                 .pointer("/env/ANTHROPIC_DEFAULT_OPUS_MODEL")
                 .and_then(|item| item.as_str()),
             Some("claude-opus")
+        );
+    }
+
+    #[test]
+    fn universal_provider_claude_meta_defaults_to_anthropic() {
+        let mut universal = UniversalProvider::new(
+            "u2".to_string(),
+            "Universal".to_string(),
+            "newapi".to_string(),
+            "https://api.example.com".to_string(),
+            "api-key".to_string(),
+        );
+        universal.apps.claude = true;
+
+        // NewAPI / 网关预设写入的 openai_chat 是给 Codex 的默认值，Claude 侧不能继承
+        universal.meta = Some(ProviderMeta {
+            api_format: Some("openai_chat".to_string()),
+            ..Default::default()
+        });
+        let provider = universal.to_claude_provider().expect("claude provider");
+        let meta = provider.meta.expect("meta");
+        assert_eq!(meta.api_format.as_deref(), Some("anthropic"));
+        assert_eq!(meta.api_format_explicit, None);
+
+        // 无 meta 时同样补 anthropic
+        universal.meta = None;
+        let provider = universal.to_claude_provider().expect("claude provider");
+        assert_eq!(
+            provider.meta.and_then(|m| m.api_format).as_deref(),
+            Some("anthropic")
+        );
+
+        // 用户显式选择的其他协议原样保留
+        universal.meta = Some(ProviderMeta {
+            api_format: Some("openai_responses".to_string()),
+            ..Default::default()
+        });
+        let provider = universal.to_claude_provider().expect("claude provider");
+        assert_eq!(
+            provider.meta.and_then(|m| m.api_format).as_deref(),
+            Some("openai_responses")
         );
     }
 

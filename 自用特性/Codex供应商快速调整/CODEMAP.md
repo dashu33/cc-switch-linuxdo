@@ -9,7 +9,7 @@
 | `src/components/providers/CodexProviderQuickAdjust.tsx` | UI + 格式/模型/获取状态色 + 失败原因旁显；模型候选严格来自本次 `/models` 返回 |
 | `src/components/providers/forms/CodexFormFields.tsx` | 编辑表单默认模型下拉；候选严格来自本次 `/models` 返回；可将本次结果追加到 Codex 模型映射 |
 | `src/components/providers/ProviderCard.tsx` | `supportsProviderQuickAdjust` + **排除 Hermes 只读**；传 `onUpdate` + probe 状态 |
-| `src/utils/providerQuickAdjust.ts` | 全局：八端门控、OpenClaw/OpenCode/Hermes 协议映射、Gemini 默认、需路由、模型读取 |
+| `src/utils/providerQuickAdjust.ts` | 全局：八端门控、OpenClaw/OpenCode/Hermes 协议映射、Gemini 默认、需路由、模型读取；`applyProviderApiFormat` 写 `meta.apiFormat` 同时置 `meta.apiFormatExplicit = true`（重新同步统一供应商时保留用户选择，见 [../新建供应商默认openai_chat/](../新建供应商默认openai_chat/)） |
 | `src/utils/applyProviderModel.ts` | 模型写回：Codex/Claude/Gemini/Grok/OpenClaw/OpenCode/**Hermes** |
 | `src/utils/providerModelsProbe.ts` | 拉模型凭证解析（含 openclaw baseUrl/apiKey） |
 | `src/utils/providerQuickAdjust.test.ts` | 门控 + Grok/OpenClaw format/model 单测 |

@@ -200,6 +200,9 @@ export interface ProviderMeta {
     | "openai_chat"
     | "openai_responses"
     | "gemini_native";
+  // 用户是否显式改过 apiFormat（卡片下拉 / 编辑表单）。
+  // 重新同步统一供应商时保留子供应商的 apiFormat，不覆盖该选择。
+  apiFormatExplicit?: boolean;
   // 通用认证绑定
   authBinding?: AuthBinding;
   // Claude 认证字段名

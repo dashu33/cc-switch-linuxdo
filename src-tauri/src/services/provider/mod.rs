@@ -4132,6 +4132,26 @@ impl ProviderService {
             let mut merged = existing.settings_config.clone();
             Self::merge_json(&mut merged, &child.settings_config);
             child.settings_config = merged;
+
+            // 子供应商被显式改过上游协议（卡片下拉 / 编辑表单）时保留其值：
+            // 统一供应商上的 apiFormat 只是创建时的默认值，重新同步不应冲掉用户选择。
+            let explicit = existing
+                .meta
+                .as_ref()
+                .and_then(|m| m.api_format_explicit)
+                .unwrap_or(false);
+            if explicit {
+                if let Some(prev_format) = existing
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.api_format.clone())
+                {
+                    let mut meta = child.meta.clone().unwrap_or_default();
+                    meta.api_format = Some(prev_format);
+                    meta.api_format_explicit = Some(true);
+                    child.meta = Some(meta);
+                }
+            }
         }
 
         let is_additive = matches!(app_type, "opencode" | "openclaw" | "hermes");

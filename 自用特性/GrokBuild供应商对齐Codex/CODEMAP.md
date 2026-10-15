@@ -6,7 +6,7 @@
 
 | 路径 | 作用 |
 |---|---|
-| `src/utils/providerQuickAdjust.ts` | 全局：快捷 App 列表、format 解析/写入、需路由判定 |
+| `src/utils/providerQuickAdjust.ts` | 全局：快捷 App 列表、format 解析/写入、需路由判定；`applyProviderApiFormat` 额外置 `meta.apiFormatExplicit = true` |
 | `src/utils/providerQuickAdjust.test.ts` | 全局框架与 Grok 单测 |
 | `src/utils/applyProviderModel.ts` | 写入模型；新增 Grok TOML upstream model |
 | `src/components/providers/CodexProviderQuickAdjust.tsx` | 卡片快捷 UI，复用全局 helper |

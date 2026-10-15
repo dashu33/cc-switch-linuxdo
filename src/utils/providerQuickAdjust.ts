@@ -422,6 +422,8 @@ export function applyProviderApiFormat(
   next.meta = {
     ...(next.meta ?? {}),
     apiFormat: format,
+    // 卡片上的手动选择：重新同步统一供应商时保留，不被默认值冲掉
+    apiFormatExplicit: true,
   };
 
   if (appId === "grokbuild") {
